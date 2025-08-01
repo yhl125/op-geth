@@ -137,7 +137,6 @@ var PrecompiledContractsPrague = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x0f}): &bls12381PairingPrague{},
 	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
-	common.BytesToAddress([]byte{0x13}): &falconvrfy{},
 }
 
 var PrecompiledContractsBLS = PrecompiledContractsPrague
@@ -195,6 +194,7 @@ var PrecompiledContractsIsthmus = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256Verify{},
+	common.BytesToAddress([]byte{0x13}):       &falconvrfy{},
 }
 
 var (
@@ -1368,7 +1368,7 @@ func (c *p256Verify) Run(input []byte) ([]byte, error) {
 type falconvrfy struct{}
 
 func (c *falconvrfy) RequiredGas(input []byte) uint64 {
-	return 3000
+	return 2500
 }
 
 func mustNewBytesType() abi.Type {
@@ -1387,7 +1387,7 @@ func (f *falconvrfy) Run(input []byte) ([]byte, error) {
 	}
 
 
-	fmt.Printf("🔍 Input  (hex): %x\n", input)
+	// fmt.Printf("Input  (hex): %x\n", input)
 
 	decoded, err := args.Unpack(input)
 	if (err != nil){
@@ -1401,9 +1401,9 @@ func (f *falconvrfy) Run(input []byte) ([]byte, error) {
 	msg, ok2 := decoded[1].([]byte)
 	pub, ok3 := decoded[2].([]byte)
 
-	fmt.Printf("🔍 Signature  (hex): %x\n", sig)
-	fmt.Printf("🔍 Message    (hex): %x\n", msg)
-	fmt.Printf("🔍 Public Key (hex): %x\n", pub)
+	// fmt.Printf("Signature  (hex): %x\n", sig)
+	// fmt.Printf("Message    (hex): %x\n", msg)
+	// fmt.Printf("Public Key (hex): %x\n", pub)
 
 	if !ok1 || !ok2 || !ok3 {
 		return nil, errors.New("invalid input values")
@@ -1411,12 +1411,17 @@ func (f *falconvrfy) Run(input []byte) ([]byte, error) {
 
 	ok, err := falcon.VerifySignature(sig, msg, pub)
 	output := []byte{0}
+	
+	// fmt.Printf("Falcon verification result: ok=%v, err=%v\n", ok, err)
+	
 	if err != nil {
+		output[0] = 0
+	} else if ok {
+		output[0] = 1
+	} else {
 		output[0] = 0
 	}
 	
-	if ok {
-		output[0] = 1
-	}
+	// fmt.Printf("Final output: %x\n", output)
 	return common.LeftPadBytes(output, 32), nil
 }

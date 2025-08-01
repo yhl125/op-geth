@@ -24,8 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/yhl125/ETHFALCON/falcon"
 )
 
 // precompiledTest defines the input/output pairs for precompiled contract tests.
@@ -71,6 +73,7 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0f, 0x10}): &bls12381MapG2{},
 
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256Verify{},
+	common.BytesToAddress([]byte{0x13}):       &falconvrfy{},
 }
 
 // EIP-152 test vectors
@@ -443,3 +446,123 @@ func BenchmarkPrecompiledP256Verify(bench *testing.B) {
 }
 
 func TestPrecompiledP256Verify(t *testing.T) { testJson("p256Verify", "100", t) }
+
+// Helper function to create ABI-encoded data for Falcon tests
+func createFalconABIInput(signature, message, publicKey []byte) ([]byte, error) {
+	bytesType, err := abi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	args := abi.Arguments{
+		{Type: bytesType},
+		{Type: bytesType},
+		{Type: bytesType},
+	}
+
+	return args.Pack(signature, message, publicKey)
+}
+
+// Tests for Falcon signature verification precompile
+func TestPrecompiledFalconVerify(t *testing.T) {
+	// Real Falcon test data
+	publicKeyHex := "09b4c44913e71be367081636c4d1cc5e59e9d17724891f4a4bc5505db1a53a124bd798128ec693f4d96ab4a77a8768f4d06abac4adc1a168bf81b25cc3a745ab65e0eb825743c354fed4e6ab54c50e899cf3d843e624e294ea3ce3ec9761a4b79fe17d2a4c2c134c24e95e29751355ea010a510415ddd5b96f625679012b319952cd265cec8c3a7498980283838434164abfde46b8502b83005ab94e91dc05cfa6cf7ec06d3194cc3854ed3933d4c5124299899ade8bda26cc43f2f649665615a1522cd4c3b074de4506a9db17dd0108326d148ada8dd355affc8684a353b943714f5dc5c91f0be48da9a3d7c3db050144b5c79d071673111b13e0a9e81470aa509902174a3c20d56f2743a63e6b03d3acc0b978f3b7e1d22a86a58942f891ca8ee6a519bb1fc11a4598a2a2582d92d9ad05294141ba564f66ace04657cd3ba36151c60e7e22603ba2334192dc866e51930f24b0b5ac92cc5b4ab5a0f886d9ac846191e742924fb47d46d40c0ba6807f9b4494539d15e770cf0c43762d9741d22380801a3e27a60d00326aa7665446342aea80f5796e831095e6a893805591f141a34f57bdbb5a29bbd21a2182e112e32095f429d54cea314b731e450fc901a7c62e2cea815fe5b51e5a76f0eb9d228bed24e3500f8a324988c69615f6be16f5eb8c0354439dc3ea84eefdbc5ac9e115c0a23ab40cbbe7015630c5af6b36ddaabe3d506bbaa1ce95808268c609e92e0db6d7bc0a8b61c1b738ec58787be9b141e196a36a059570e68fadaacd991033c24e6a98b75a5403da7dcdcdcbb891ac69649b813116c6268c2497ef81180a1a2a7aca00761a29968049cdc031ca8551c8a4178bd29ab1b2a8286f2c147788836906a5cf7bd419c526ce1244ab50be78f108f693133f8cfdbe2369d4cf269124286ed2e0476e1cc4be640836be02c5b785a21c4181f48daa612afc30946e102122c983fb1326609ba670c4b681fa64be3a443c24aa93fdafd72c1d4d15c89010c011790a4542232c28ce752cef054b6de1b3ae50942a2f08b0b61114b52ea822bcd0513ce1931eb45889519cef28b9a42618a5e8a70d865875e1aa6f395052294963585c01ba39ac0a65d64dd760d2757d32de3a6ac9073740d3c587d87d1e38e4d70653b866bde9691684ac1bc2aa25ce2bea3f165d88bf5f693541ea97cfaa6520c6dcebaea82c58b1025433d23022f0713a7392da99ee9927be842f562a1015e1987966c84550dca81a92e8b0f67625c6"
+	signatureHex := "026699b77ab3eb4e18e85ea5b9affa1d68b2d223dee20d1f855fd1a8222b31b53cb5c7328f685f90545c48656c6c6f2046616c636f6e212937f0b0679e12357a282b308d33c74959fb66b4394acccf10897f61cb937c8c7ff608ce5331335b609104229de69d377ab77da5dc5eb82cb5de3c8df8d7f65644e018bc2da09163968126c2cd619df82d9b886dd63b044ef49d3c3bd4a671b78c4918141f185d1e5cb9af83ae8b86b99c6737aae342b76da87154454181be5005c3a0ea25be062513c1b0493947c2cc35547486ada4e220478fb70d66d0aae621046094aa34a28fd64a5d599f24d9f7a0b0b9a5ea2bd4f82fcd31adc63a77bb62613df8258ab2a734e888a28290e1e7ece5250fca3b1c475b00bda09d86a3a84419c53b91125d53b44f14c69d2ccbed023618460d8ba8f9b87745dca2a4f2d2ab893d6ff4cf2853b883f1a789e18c479760cd9aa770d8636186f11723f7fd7fcf3cb1a8c984e99cfbf5f79687090a26c5630a4fed5666c4875d7d781b72228f890d4a5fa27c233b4edab0891bc953f8af6e598287a24f894e4b2e4e60705fc52d4961f9f9144aa1c3661bdd9de33fc3eaae51fa82173f600c03a8cde6a5377f7c3983a169353b1203c493747c3b3ccba5d3b5e57f313a93fb0b4a68bea4788511a2419090a24ed4d6ec9eb5d822c51d383bc8624382aa5112732ad9b9ab23fd8d64bbec2772b9f3cb3ecf9c6a4643ef173b6fe7a7d45710a39e66b4287e8b53226a0c211335f589b6f6aad9442464ad37e8344feef23ccd5558d75e7b62b6c65bc5bba5a840ae728fdf2317973c489c5706dd335c38334511e231c716ce88fc7c085f62c274fafb4cdb177758c612c69ce3230460c9b45476e61bf399a9f4e29b91d1bdd94227c6e06dd2ef1afce3a5daaa6e2cca6ad886db99d1cee2f663373bee7ae4237f"
+	message := []byte("Hello Falcon!")
+
+	// Decode hex strings to bytes
+	publicKey := common.Hex2Bytes(publicKeyHex)
+	signature := common.Hex2Bytes(signatureHex)
+
+	// Test case 1: Valid signature verification
+	t.Run("ValidSignature", func(t *testing.T) {
+		// Create ABI-encoded input
+		abiInput, err := createFalconABIInput(signature, message, publicKey)
+		if err != nil {
+			t.Fatalf("Failed to create ABI input: %v", err)
+		}
+
+		p := allPrecompiles[common.BytesToAddress([]byte{0x13})]
+		gas := p.RequiredGas(abiInput)
+
+		if gas != 2500 {
+			t.Errorf("Expected gas cost 2500, got %d", gas)
+		}
+
+		result, _, err := RunPrecompiledContract(p, abiInput, gas, nil)
+		if err != nil {
+			t.Errorf("Failed to run precompiled contract: %v", err)
+		}
+
+		// Check if signature verification succeeded (result should be 1)
+		expected := common.LeftPadBytes([]byte{1}, 32)
+		if !bytes.Equal(result, expected) {
+			t.Errorf("Expected valid signature result %x, got %x", expected, result)
+		}
+	})
+
+	// Test case 2: Test with Falcon library directly for comparison
+	t.Run("FalconLibraryDirectTest", func(t *testing.T) {
+		isValid, err := falcon.VerifySignature(signature, message, publicKey)
+		if err != nil {
+			t.Errorf("Direct Falcon verification failed: %v", err)
+		}
+		if !isValid {
+			t.Error("Direct Falcon verification returned false for valid signature")
+		}
+	})
+
+	// Test case 3: Invalid signature (tamper with signature)
+	t.Run("InvalidSignature", func(t *testing.T) {
+		// Tamper with signature
+		tamperedSignature := make([]byte, len(signature))
+		copy(tamperedSignature, signature)
+		tamperedSignature[0] ^= 0xFF // Flip bits in first byte
+
+		abiInput, err := createFalconABIInput(tamperedSignature, message, publicKey)
+
+		if err != nil {
+			t.Fatalf("Failed to create ABI input: %v", err)
+		}
+
+		p := allPrecompiles[common.BytesToAddress([]byte{0x13})]
+		gas := p.RequiredGas(abiInput)
+
+		result, _, err := RunPrecompiledContract(p, abiInput, gas, nil)
+		if err != nil {
+			t.Errorf("Failed to run precompiled contract: %v", err)
+		}
+
+		// Check if signature verification failed (result should be 0)
+		expected := common.LeftPadBytes([]byte{0}, 32)
+		if !bytes.Equal(result, expected) {
+			t.Errorf("Expected invalid signature result %x, got %x", expected, result)
+		}
+	})
+}
+
+// Benchmark for Falcon signature verification
+func BenchmarkPrecompiledFalconVerify(b *testing.B) {
+	// Falcon test data
+	publicKeyHex := "09b4c44913e71be367081636c4d1cc5e59e9d17724891f4a4bc5505db1a53a124bd798128ec693f4d96ab4a77a8768f4d06abac4adc1a168bf81b25cc3a745ab65e0eb825743c354fed4e6ab54c50e899cf3d843e624e294ea3ce3ec9761a4b79fe17d2a4c2c134c24e95e29751355ea010a510415ddd5b96f625679012b319952cd265cec8c3a7498980283838434164abfde46b8502b83005ab94e91dc05cfa6cf7ec06d3194cc3854ed3933d4c5124299899ade8bda26cc43f2f649665615a1522cd4c3b074de4506a9db17dd0108326d148ada8dd355affc8684a353b943714f5dc5c91f0be48da9a3d7c3db050144b5c79d071673111b13e0a9e81470aa509902174a3c20d56f2743a63e6b03d3acc0b978f3b7e1d22a86a58942f891ca8ee6a519bb1fc11a4598a2a2582d92d9ad05294141ba564f66ace04657cd3ba36151c60e7e22603ba2334192dc866e51930f24b0b5ac92cc5b4ab5a0f886d9ac846191e742924fb47d46d40c0ba6807f9b4494539d15e770cf0c43762d9741d22380801a3e27a60d00326aa7665446342aea80f5796e831095e6a893805591f141a34f57bdbb5a29bbd21a2182e112e32095f429d54cea314b731e450fc901a7c62e2cea815fe5b51e5a76f0eb9d228bed24e3500f8a324988c69615f6be16f5eb8c0354439dc3ea84eefdbc5ac9e115c0a23ab40cbbe7015630c5af6b36ddaabe3d506bbaa1ce95808268c609e92e0db6d7bc0a8b61c1b738ec58787be9b141e196a36a059570e68fadaacd991033c24e6a98b75a5403da7dcdcdcbb891ac69649b813116c6268c2497ef81180a1a2a7aca00761a29968049cdc031ca8551c8a4178bd29ab1b2a8286f2c147788836906a5cf7bd419c526ce1244ab50be78f108f693133f8cfdbe2369d4cf269124286ed2e0476e1cc4be640836be02c5b785a21c4181f48daa612afc30946e102122c983fb1326609ba670c4b681fa64be3a443c24aa93fdafd72c1d4d15c89010c011790a4542232c28ce752cef054b6de1b3ae50942a2f08b0b61114b52ea822bcd0513ce1931eb45889519cef28b9a42618a5e8a70d865875e1aa6f395052294963585c01ba39ac0a65d64dd760d2757d32de3a6ac9073740d3c587d87d1e38e4d70653b866bde9691684ac1bc2aa25ce2bea3f165d88bf5f693541ea97cfaa6520c6dcebaea82c58b1025433d23022f0713a7392da99ee9927be842f562a1015e1987966c84550dca81a92e8b0f67625c6"
+	signatureHex := "026699b77ab3eb4e18e85ea5b9affa1d68b2d223dee20d1f855fd1a8222b31b53cb5c7328f685f90545c48656c6c6f2046616c636f6e212937f0b0679e12357a282b308d33c74959fb66b4394acccf10897f61cb937c8c7ff608ce5331335b609104229de69d377ab77da5dc5eb82cb5de3c8df8d7f65644e018bc2da09163968126c2cd619df82d9b886dd63b044ef49d3c3bd4a671b78c4918141f185d1e5cb9af83ae8b86b99c6737aae342b76da87154454181be5005c3a0ea25be062513c1b0493947c2cc35547486ada4e220478fb70d66d0aae621046094aa34a28fd64a5d599f24d9f7a0b0b9a5ea2bd4f82fcd31adc63a77bb62613df8258ab2a734e888a28290e1e7ece5250fca3b1c475b00bda09d86a3a84419c53b91125d53b44f14c69d2ccbed023618460d8ba8f9b87745dca2a4f2d2ab893d6ff4cf2853b883f1a789e18c479760cd9aa770d8636186f11723f7fd7fcf3cb1a8c984e99cfbf5f79687090a26c5630a4fed5666c4875d7d781b72228f890d4a5fa27c233b4edab0891bc953f8af6e598287a24f894e4b2e4e60705fc52d4961f9f9144aa1c3661bdd9de33fc3eaae51fa82173f600c03a8cde6a5377f7c3983a169353b1203c493747c3b3ccba5d3b5e57f313a93fb0b4a68bea4788511a2419090a24ed4d6ec9eb5d822c51d383bc8624382aa5112732ad9b9ab23fd8d64bbec2772b9f3cb3ecf9c6a4643ef173b6fe7a7d45710a39e66b4287e8b53226a0c211335f589b6f6aad9442464ad37e8344feef23ccd5558d75e7b62b6c65bc5bba5a840ae728fdf2317973c489c5706dd335c38334511e231c716ce88fc7c085f62c274fafb4cdb177758c612c69ce3230460c9b45476e61bf399a9f4e29b91d1bdd94227c6e06dd2ef1afce3a5daaa6e2cca6ad886db99d1cee2f663373bee7ae4237f"
+	message := []byte("Hello Falcon!")
+
+	// Decode hex strings to bytes
+	publicKey := common.Hex2Bytes(publicKeyHex)
+	signature := common.Hex2Bytes(signatureHex)
+
+	// Create ABI-encoded input
+	abiInput, err := createFalconABIInput(signature, message, publicKey)
+	if err != nil {
+		b.Fatalf("Failed to create ABI input: %v", err)
+	}
+
+	test := precompiledTest{
+		Input:       common.Bytes2Hex(abiInput),
+		Expected:    "0000000000000000000000000000000000000000000000000000000000000001", // Expected valid signature
+		Name:        "FalconVerify",
+	}
+
+	benchmarkPrecompiled("13", test, b)
+}
