@@ -18,6 +18,7 @@ package vm
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -74,6 +75,8 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256Verify{},
 	common.BytesToAddress([]byte{0x13}):       &falconvrfy{},
+	common.BytesToAddress([]byte{0x14}):       &pureNTT{},        // Pure NTT (no caching)
+	common.BytesToAddress([]byte{0x15}):       &precomputedNTT{}, // Precomputed NTT (with caching)
 }
 
 // EIP-152 test vectors
@@ -559,10 +562,426 @@ func BenchmarkPrecompiledFalconVerify(b *testing.B) {
 	}
 
 	test := precompiledTest{
-		Input:       common.Bytes2Hex(abiInput),
-		Expected:    "0000000000000000000000000000000000000000000000000000000000000001", // Expected valid signature
-		Name:        "FalconVerify",
+		Input:    common.Bytes2Hex(abiInput),
+		Expected: "0000000000000000000000000000000000000000000000000000000000000001", // Expected valid signature
+		Name:     "FalconVerify",
 	}
 
 	benchmarkPrecompiled("13", test, b)
+}
+
+// Helper function to create properly formatted input for NTT tests
+func createNTTInput(isForward bool, ringDegree uint32, modulus uint64, coefficients []uint64) []byte {
+	input := make([]byte, 1+4+8+len(coefficients)*8)
+
+	// Operation: 0 = forward NTT, 1 = inverse NTT
+	if isForward {
+		input[0] = 0
+	} else {
+		input[0] = 1
+	}
+
+	// Ring degree (4 bytes, big endian)
+	binary.BigEndian.PutUint32(input[1:5], ringDegree)
+
+	// Modulus (8 bytes, big endian)
+	binary.BigEndian.PutUint64(input[5:13], modulus)
+
+	// Coefficients (8 bytes each, big endian)
+	for i, coeff := range coefficients {
+		binary.BigEndian.PutUint64(input[13+i*8:13+(i+1)*8], coeff)
+	}
+
+	return input
+}
+
+// Test NTT precompile
+func TestPrecompiledNTT(t *testing.T) {
+	t.Run("NTT Forward Transform", func(t *testing.T) {
+		// Test parameters: ring degree 512, modulus 12289 (Falcon NTT-friendly)
+		ringDegree := uint32(512)
+		modulus := uint64(12289) // Falcon modulus from Python reference
+
+		// Create input: operation(1) + ring_degree(4) + modulus(8) + coefficients(512*8)
+		input := make([]byte, 1+4+8+512*8)
+
+		// Operation: 0 = forward NTT
+		input[0] = 0
+
+		// Ring degree (big endian)
+		binary.BigEndian.PutUint32(input[1:5], ringDegree)
+
+		// Modulus (big endian)
+		binary.BigEndian.PutUint64(input[5:13], modulus)
+
+		// Test coefficients: simple pattern
+		testCoeffs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+		for i, coeff := range testCoeffs {
+			binary.BigEndian.PutUint64(input[13+i*8:13+(i+1)*8], coeff)
+		}
+
+		// Run precompile
+		p := &precomputedNTT{}
+		gas := p.RequiredGas(input)
+		result, err := p.Run(input)
+
+		if err != nil {
+			t.Fatalf("NTT precompile failed: %v", err)
+		}
+
+		if len(result) != int(ringDegree)*8 {
+			t.Fatalf("Expected result length %d, got %d", ringDegree*8, len(result))
+		}
+
+		// Verify that result is different from input (NTT should transform the coefficients)
+		resultChanged := false
+		for i := 0; i < int(ringDegree); i++ {
+			resultCoeff := binary.BigEndian.Uint64(result[i*8 : (i+1)*8])
+			if resultCoeff != testCoeffs[i] {
+				resultChanged = true
+				break
+			}
+		}
+
+		if !resultChanged {
+			t.Error("NTT result should be different from input coefficients")
+		}
+
+		t.Logf("NTT forward transform succeeded, gas used: %d", gas)
+	})
+
+	t.Run("NTT Inverse Transform", func(t *testing.T) {
+		ringDegree := uint32(16)
+		modulus := uint64(12289) // Falcon modulus
+
+		// First, do a forward transform
+		inputForward := make([]byte, 1+4+8+16*8)
+		inputForward[0] = 0 // forward
+		binary.BigEndian.PutUint32(inputForward[1:5], ringDegree)
+		binary.BigEndian.PutUint64(inputForward[5:13], modulus)
+
+		testCoeffs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+		for i, coeff := range testCoeffs {
+			binary.BigEndian.PutUint64(inputForward[13+i*8:13+(i+1)*8], coeff)
+		}
+
+		p := &precomputedNTT{}
+		forwardResult, err := p.Run(inputForward)
+		if err != nil {
+			t.Fatalf("Forward NTT failed: %v", err)
+		}
+
+		// Now do inverse transform on the result
+		inputInverse := make([]byte, 1+4+8+16*8)
+		inputInverse[0] = 1 // inverse
+		binary.BigEndian.PutUint32(inputInverse[1:5], ringDegree)
+		binary.BigEndian.PutUint64(inputInverse[5:13], modulus)
+		copy(inputInverse[13:], forwardResult)
+
+		inverseResult, err := p.Run(inputInverse)
+		if err != nil {
+			t.Fatalf("Inverse NTT failed: %v", err)
+		}
+
+		// Verify that forward + inverse gives back original (approximately, due to modular arithmetic)
+		for i := 0; i < int(ringDegree); i++ {
+			originalCoeff := testCoeffs[i]
+			recoveredCoeff := binary.BigEndian.Uint64(inverseResult[i*8 : (i+1)*8])
+
+			// Allow for modular reduction
+			if recoveredCoeff != originalCoeff && recoveredCoeff != originalCoeff%modulus {
+				t.Errorf("Coefficient %d: expected %d or %d, got %d", i, originalCoeff, originalCoeff%modulus, recoveredCoeff)
+			}
+		}
+
+		t.Log("NTT round-trip (forward + inverse) succeeded")
+	})
+
+	t.Run("NTT Invalid Inputs", func(t *testing.T) {
+		p := &precomputedNTT{}
+
+		// Test empty input
+		_, err := p.Run([]byte{})
+		if err == nil {
+			t.Error("Expected error for empty input")
+		}
+
+		// Test invalid operation
+		invalidOp := make([]byte, 13)
+		invalidOp[0] = 2 // invalid operation
+		_, err = p.Run(invalidOp)
+		if err == nil {
+			t.Error("Expected error for invalid operation")
+		}
+
+		// Test invalid ring degree (not power of 2)
+		invalidDegree := make([]byte, 1+4+8+15*8)
+		invalidDegree[0] = 0
+		binary.BigEndian.PutUint32(invalidDegree[1:5], 15) // not power of 2
+		_, err = p.Run(invalidDegree)
+		if err == nil {
+			t.Error("Expected error for invalid ring degree")
+		}
+
+		t.Log("Invalid input tests passed")
+	})
+}
+
+// Test NTT transforms with specific cryptographic standards
+func TestNTTCryptographicStandards(t *testing.T) {
+	// Test parameters based on cryptographic standards
+	testCases := []struct {
+		name      string
+		degree    uint32
+		modulus   uint64
+		cryptoStd string
+	}{
+		{"Falcon-512", 512, 12289, "Falcon (NIST PQC)"},
+		{"Dilithium-256", 256, 8380417, "Dilithium (NIST PQC)"},
+		{"Kyber-128", 128, 3329, "Kyber (NIST PQC)"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate test coefficients
+			coeffs := make([]uint64, tc.degree)
+			for i := uint32(0); i < tc.degree; i++ {
+				coeffs[i] = uint64(i+1) % tc.modulus
+			}
+
+			// Test Precomputed NTT
+			t.Run("PrecomputedNTT", func(t *testing.T) {
+				input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
+
+				p := &precomputedNTT{}
+				gas := p.RequiredGas(input)
+				result, err := p.Run(input)
+
+				if err != nil {
+					t.Fatalf("Precomputed NTT failed for %s: %v", tc.cryptoStd, err)
+				}
+
+				if len(result) != int(tc.degree)*8 {
+					t.Fatalf("Expected result length %d, got %d", tc.degree*8, len(result))
+				}
+
+				// Verify result is different from input (NTT transform)
+				transformed := false
+				for i := uint32(0); i < tc.degree; i++ {
+					resultCoeff := binary.BigEndian.Uint64(result[i*8 : (i+1)*8])
+					if resultCoeff != coeffs[i] {
+						transformed = true
+						break
+					}
+				}
+
+				if !transformed {
+					t.Errorf("NTT should transform coefficients for %s", tc.cryptoStd)
+				}
+
+				t.Logf("✓ Precomputed NTT succeeded for %s (degree=%d, modulus=%d, gas=%d)",
+					tc.cryptoStd, tc.degree, tc.modulus, gas)
+			})
+
+			// Test Pure NTT
+			t.Run("PureNTT", func(t *testing.T) {
+				input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
+
+				p := &pureNTT{}
+				gas := p.RequiredGas(input)
+				result, err := p.Run(input)
+
+				if err != nil {
+					t.Fatalf("Pure NTT failed for %s: %v", tc.cryptoStd, err)
+				}
+
+				if len(result) != int(tc.degree)*8 {
+					t.Fatalf("Expected result length %d, got %d", tc.degree*8, len(result))
+				}
+
+				// Verify result is different from input (NTT transform)
+				transformed := false
+				for i := uint32(0); i < tc.degree; i++ {
+					resultCoeff := binary.BigEndian.Uint64(result[i*8 : (i+1)*8])
+					if resultCoeff != coeffs[i] {
+						transformed = true
+						break
+					}
+				}
+
+				if !transformed {
+					t.Errorf("NTT should transform coefficients for %s", tc.cryptoStd)
+				}
+
+				t.Logf("✓ Pure NTT succeeded for %s (degree=%d, modulus=%d, gas=%d)",
+					tc.cryptoStd, tc.degree, tc.modulus, gas)
+			})
+
+			// Test round-trip: Forward + Inverse NTT
+			t.Run("RoundTrip", func(t *testing.T) {
+				// Forward transform
+				forwardInput := createNTTInput(true, tc.degree, tc.modulus, coeffs)
+				p := &precomputedNTT{}
+				forwardResult, err := p.Run(forwardInput)
+				if err != nil {
+					t.Fatalf("Forward NTT failed: %v", err)
+				}
+
+				// Extract transformed coefficients
+				transformedCoeffs := make([]uint64, tc.degree)
+				for i := uint32(0); i < tc.degree; i++ {
+					transformedCoeffs[i] = binary.BigEndian.Uint64(forwardResult[i*8 : (i+1)*8])
+				}
+
+				// Inverse transform
+				inverseInput := createNTTInput(false, tc.degree, tc.modulus, transformedCoeffs)
+				inverseResult, err := p.Run(inverseInput)
+				if err != nil {
+					t.Fatalf("Inverse NTT failed: %v", err)
+				}
+
+				// Verify round-trip recovery
+				maxError := uint64(0)
+				for i := uint32(0); i < tc.degree; i++ {
+					original := coeffs[i]
+					recovered := binary.BigEndian.Uint64(inverseResult[i*8 : (i+1)*8])
+
+					// Allow for modular reduction
+					if recovered != original && recovered != original%tc.modulus {
+						error := uint64(0)
+						if recovered > original {
+							error = recovered - original
+						} else {
+							error = original - recovered
+						}
+						if error > maxError {
+							maxError = error
+						}
+
+						// Check if difference is due to modular arithmetic
+						if (original % tc.modulus) != (recovered % tc.modulus) {
+							t.Errorf("Round-trip failed at coefficient %d for %s: original=%d, recovered=%d",
+								i, tc.cryptoStd, original, recovered)
+						}
+					}
+				}
+
+				t.Logf("✓ Round-trip test passed for %s (max_error=%d)", tc.cryptoStd, maxError)
+			})
+		})
+	}
+}
+
+// Benchmark NTT transforms for cryptographic standards
+func BenchmarkNTTCryptographicStandards(b *testing.B) {
+	testCases := []struct {
+		name      string
+		degree    uint32
+		modulus   uint64
+		cryptoStd string
+	}{
+		{"Falcon-512", 512, 12289, "Falcon"},
+		{"Dilithium-256", 256, 8380417, "Dilithium"},
+		{"Kyber-128", 128, 3329, "Kyber"},
+	}
+
+	for _, tc := range testCases {
+		// Generate test coefficients
+		coeffs := make([]uint64, tc.degree)
+		for i := uint32(0); i < tc.degree; i++ {
+			coeffs[i] = uint64(i+1) % tc.modulus
+		}
+		input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
+
+		// Benchmark Precomputed NTT
+		b.Run("Precomputed-"+tc.name, func(b *testing.B) {
+			p := &precomputedNTT{}
+			gas := p.RequiredGas(input)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				result, err := p.Run(input)
+				if err != nil {
+					b.Fatalf("Precomputed NTT failed: %v", err)
+				}
+				_ = result // Prevent optimization
+			}
+
+			b.ReportMetric(float64(gas), "gas/op")
+			b.ReportMetric(float64(gas)/b.Elapsed().Seconds()*float64(b.N)/1e6, "mgas/s")
+		})
+
+		// Benchmark Pure NTT
+		b.Run("Pure-"+tc.name, func(b *testing.B) {
+			p := &pureNTT{}
+			gas := p.RequiredGas(input)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				result, err := p.Run(input)
+				if err != nil {
+					b.Fatalf("Pure NTT failed: %v", err)
+				}
+				_ = result // Prevent optimization
+			}
+
+			b.ReportMetric(float64(gas), "gas/op")
+			b.ReportMetric(float64(gas)/b.Elapsed().Seconds()*float64(b.N)/1e6, "mgas/s")
+		})
+	}
+}
+
+// Test NTT parameter validation
+func TestNTTParameterValidation(t *testing.T) {
+	testCases := []struct {
+		name          string
+		degree        uint32
+		modulus       uint64
+		shouldFail    bool
+		expectedError string
+	}{
+		{"Falcon-Valid", 512, 12289, false, ""},
+		{"Dilithium-Valid", 256, 8380417, false, ""},
+		{"Kyber-Valid", 128, 3329, false, ""},
+		{"InvalidDegree-NotPowerOf2", 100, 12289, true, "invalid ring degree"},
+		{"InvalidDegree-TooSmall", 8, 12289, true, "invalid ring degree"},
+		{"InvalidModulus-Zero", 256, 0, true, "invalid modulus"},
+		{"InvalidModulus-TooLarge", 256, 1 << 62, true, "invalid modulus"},
+		{"InvalidModulus-NotNTTFriendly", 256, 12290, true, "modulus must be congruent to 1"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate simple test coefficients
+			coeffs := make([]uint64, tc.degree)
+			for i := uint32(0); i < tc.degree && i < 100; i++ {
+				if tc.modulus > 0 {
+					coeffs[i] = uint64(i+1) % tc.modulus
+				} else {
+					coeffs[i] = uint64(i + 1)
+				}
+			}
+
+			input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
+
+			p := &precomputedNTT{}
+			_, err := p.Run(input)
+
+			if tc.shouldFail {
+				if err == nil {
+					t.Errorf("Expected error for %s, but got none", tc.name)
+				} else if tc.expectedError != "" && !bytes.Contains([]byte(err.Error()), []byte(tc.expectedError)) {
+					t.Errorf("Expected error containing '%s', got: %v", tc.expectedError, err)
+				} else {
+					t.Logf("✓ Correctly rejected invalid parameters: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected success for %s, got error: %v", tc.name, err)
+				} else {
+					t.Logf("✓ Correctly accepted valid parameters for %s", tc.name)
+				}
+			}
+		})
+	}
 }
