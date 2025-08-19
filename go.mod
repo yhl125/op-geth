@@ -1,6 +1,6 @@
 module github.com/ethereum/go-ethereum
 
-go 1.24.4
+go 1.25.0
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
@@ -66,7 +66,7 @@ require (
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	github.com/tuneinsight/lattigo/v6 v6.1.1
 	github.com/urfave/cli/v2 v2.27.5
-	github.com/yhl125/ETHFALCON/falcon v0.1.0
+	github.com/yhl125/ETHFALCON/falcon v0.2.0
 	go.uber.org/automaxprocs v1.5.2
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.35.0
