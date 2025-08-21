@@ -1435,7 +1435,7 @@ type pureNTT struct{}
 // RequiredGas returns the gas required to execute the pure NTT operation
 func (c *pureNTT) RequiredGas(input []byte) uint64 {
 	// Higher gas cost for pure NTT due to no optimization
-	return 30000
+	return 70000
 }
 
 // Run executes the pure NTT transformation without caching
@@ -1603,10 +1603,10 @@ func (c *precomputedNTT) RequiredGas(input []byte) uint64 {
 
 	// Apply scaling factor to get reasonable gas costs
 	// Factor adjusted to achieve more balanced mgas/s across different degrees
-	gasRequired := baseComplexity / 10
+	gasRequired := baseComplexity / 5
 
 	// Ensure minimum gas cost
-	minGas := uint64(120)
+	minGas := uint64(100)
 	if gasRequired < minGas {
 		gasRequired = minGas
 	}
