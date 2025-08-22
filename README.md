@@ -1,3 +1,33 @@
+# Optimism-geth with Falcon and NTT Precompiles
+
+This is a fork of `op-geth` that includes precompiled contracts for Falcon signature verification and Number Theoretic Transform (NTT) operations.
+
+## Precompiled Contracts
+
+The following precompiled contracts have been added at the specified addresses in `core/vm/contracts.go`:
+
+-   `0x13`: **falconvrfy**: Verifies a Falcon-1024 signature.
+-   `0x14`: **pureNTT**: A pure implementation of NTT that computes parameters on each call without caching.
+-   `0x15`: **precomputedNTT**: An optimized NTT implementation that uses pre-computed and cached ring parameters for specific cryptographic standards (Falcon-512, Dilithium, Kyber).
+
+Corresponding tests and benchmarks are implemented in `core/vm/contracts_test.go`.
+
+### Gas Costing
+
+The gas costs for the new precompiles were determined by targeting a performance of approximately 50 Mgas/s, similar to the existing `ecrecover` precompile.
+
+-   **pureNTT**: A fixed gas cost of 70,000 is applied. This is because the majority of the computation is spent on generating the NTT table, making the cost largely independent of input parameters.
+-   **precomputedNTT**: Gas cost is calculated dynamically based on the ring degree (`N`) to reflect the `O(N log N)` complexity of the NTT operation.
+
+### Benchmark Results
+
+Benchmarks were run on an `Intel(R) Xeon(R) CPU @ 2.20GHz`. For detailed results, please see the files below:
+
+- [Ecrecover Benchmark Test Results](./benchmark_results/ecrecover_benchmark_test)
+- [NTT Benchmark Test Results](./benchmark_results/ntt_benchmark_test)
+
+---
+
 ## Go Ethereum
 
 Golang execution layer implementation of the Ethereum protocol.
