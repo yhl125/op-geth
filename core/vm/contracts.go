@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/crypto/secp256r1"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/tuneinsight/lattigo/v6/ring"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -222,6 +223,7 @@ var PrecompiledContractsIsthmus = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0f}):       &bls12381PairingIsthmus{},
 	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x12}):       &NTT{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
 }
 
@@ -1429,4 +1431,94 @@ func (c *p256Verify) Run(input []byte) ([]byte, error) {
 		return true32Byte, nil
 	}
 	return nil, nil
+}
+
+// NTT implements pure NTT without caching (original implementation)
+type NTT struct{}
+
+// RequiredGas returns the gas required to execute the pure NTT operation
+func (c *NTT) RequiredGas(input []byte) uint64 {
+	// Higher gas cost for pure NTT due to no optimization
+	return 70000
+}
+
+// Run executes the pure NTT transformation without caching
+func (c *NTT) Run(input []byte) ([]byte, error) {
+	// Input format: operation (1 byte) + ring_degree (4 bytes) + modulus (8 bytes) + coefficients (ring_degree * 8 bytes)
+	// operation: 0 = forward NTT, 1 = inverse NTT
+
+	if len(input) < 13 {
+		return nil, errors.New("input too short")
+	}
+
+	operation := input[0]
+	if operation > 1 {
+		return nil, errors.New("invalid operation: must be 0 (forward) or 1 (inverse)")
+	}
+
+	// Extract ring degree (4 bytes, big endian)
+	ringDegree := binary.BigEndian.Uint32(input[1:5])
+
+	// Validate ring degree (must be power of 2, >= 16)
+	if ringDegree < 16 || (ringDegree&(ringDegree-1)) != 0 {
+		return nil, errors.New("invalid ring degree: must be power of 2 >= 16")
+	}
+
+	// Extract modulus (8 bytes, big endian)
+	modulus := binary.BigEndian.Uint64(input[5:13])
+
+	// Validate modulus (must be non-zero and NTT-friendly prime)
+	if modulus == 0 {
+		return nil, errors.New("modulus cannot be zero")
+	}
+
+	// Check if modulus is congruent to 1 mod 2*ringDegree (NTT-friendly condition)
+	if modulus%(2*uint64(ringDegree)) != 1 {
+		return nil, errors.New("modulus must be congruent to 1 mod 2*ringDegree")
+	}
+
+	// Check input length matches expected coefficient count
+	expectedLen := 13 + int(ringDegree)*8
+	if len(input) != expectedLen {
+		return nil, fmt.Errorf("input length mismatch: expected %d, got %d", expectedLen, len(input))
+	}
+
+	// Extract coefficients (8 bytes each, big endian)
+	coeffs := make([]uint64, ringDegree)
+	for i := 0; i < int(ringDegree); i++ {
+		coeffs[i] = binary.BigEndian.Uint64(input[13+i*8 : 13+(i+1)*8])
+		// Ensure coefficient is within modulus for predictable behavior
+		if coeffs[i] >= modulus {
+			return nil, fmt.Errorf("coefficient %d exceeds modulus", i)
+		}
+	}
+
+	// Create new ring each time (no caching for pure NTT)
+	r, err := ring.NewRing(int(ringDegree), []uint64{modulus})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ring: %v", err)
+	}
+
+	// Create input and output polynomials
+	input_poly := r.NewPoly()
+	output_poly := r.NewPoly()
+
+	// Copy coefficients to input polynomial
+	copy(input_poly.Coeffs[0], coeffs)
+
+	// Perform NTT operation
+	switch operation {
+	case 0: // Forward NTT
+		r.NTT(input_poly, output_poly)
+	case 1: // Inverse NTT
+		r.INTT(input_poly, output_poly)
+	}
+
+	// Convert result back to bytes
+	result := make([]byte, int(ringDegree)*8)
+	for i := 0; i < int(ringDegree); i++ {
+		binary.BigEndian.PutUint64(result[i*8:(i+1)*8], output_poly.Coeffs[0][i])
+	}
+
+	return result, nil
 }
