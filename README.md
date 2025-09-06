@@ -1,3 +1,42 @@
+# Optimism-geth with NTT Precompiles
+
+This is a fork of `op-geth` that includes a precompiled contract for Number Theoretic Transform (NTT) operations.
+
+## NTT Precompiled Contract
+
+The following precompiled contract has been added at address `0x12` in `core/vm/contracts.go`:
+
+- **`0x12`: NTT**: Performs Number Theoretic Transform operations using the Lattigo library. Supports both forward and inverse NTT transformations.
+
+### Implementation Details
+
+The NTT precompile accepts input in the following format:
+- `operation` (1 byte): `0x00` for forward NTT, `0x01` for inverse NTT
+- `ring_degree` (4 bytes): Power of 2, minimum 16
+- `modulus` (8 bytes): NTT-friendly prime where `q ≡ 1 (mod 2N)`
+- `coefficients` (8*N bytes): Ring coefficients as 64-bit integers
+
+### Gas Costing
+
+A fixed gas cost of 70,000 is applied, targeting approximately 50 mgas/s performance to maintain consistency with existing precompiles like `ecrecover`.
+
+### Tests and Benchmarks
+
+Comprehensive tests and benchmarks are implemented in `core/vm/contracts_test.go`, including:
+
+- **Malformed Input Tests**: 8 test cases covering invalid operations, ring degrees, moduli, and coefficients
+- **Forward/Inverse NTT Tests**: Round-trip validation ensuring `INTT(NTT(x)) = x`
+- **Crypto Standards Benchmarks**: Performance testing with real-world parameters from Falcon-512, Kyber-128, and Dilithium-256
+
+### Benchmark Results
+
+Benchmarks were run on an Intel(R) Xeon(R) CPU @ 2.20GHz. For detailed results, please see the files below:
+
+- [Ecrecover Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledEcrecover)
+- [NTT Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledNTTCryptoStandards)
+
+---
+
 ## Go Ethereum
 
 Golang execution layer implementation of the Ethereum protocol.
