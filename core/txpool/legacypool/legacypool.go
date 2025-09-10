@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -158,6 +157,7 @@ type Config struct {
 	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
 
 	EffectiveGasCeil uint64 // OP-Stack: if non-zero, a gas ceiling to enforce independent of the header's gaslimit value
+	MaxTxGasLimit    uint64 // Maximum gas limit allowed per individual transaction
 
 	// FilterInterval defines how often already-added transactions are rechecked
 	// against ingress filters.
@@ -176,6 +176,8 @@ var DefaultConfig = Config{
 	GlobalSlots:  4096 + 1024, // urgent + floating queue capacity with 4:1 ratio
 	AccountQueue: 64,
 	GlobalQueue:  1024,
+
+	MaxTxGasLimit: 0, // 0 means no limit (default behavior)
 
 	Lifetime:       3 * time.Hour,
 	FilterInterval: 12 * time.Second,
@@ -594,11 +596,19 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 		txs := list.Flatten()
 
 		// If the miner requests tip enforcement, cap the lists now
-		if minTipBig != nil {
+		if minTipBig != nil || filter.GasLimitCap != 0 {
 			for i, tx := range txs {
-				if tx.EffectiveGasTipIntCmp(minTipBig, baseFeeBig) < 0 {
-					txs = txs[:i]
-					break
+				if minTipBig != nil {
+					if tx.EffectiveGasTipIntCmp(minTipBig, baseFeeBig) < 0 {
+						txs = txs[:i]
+						break
+					}
+				}
+				if filter.GasLimitCap != 0 {
+					if tx.Gas() > filter.GasLimitCap {
+						txs = txs[:i]
+						break
+					}
 				}
 			}
 		}
@@ -652,6 +662,7 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 		MaxSize:          txMaxSize,
 		MinTip:           pool.gasTip.Load().ToBig(),
 		EffectiveGasCeil: pool.config.EffectiveGasCeil,
+		MaxTxGasLimit:    pool.config.MaxTxGasLimit,
 	}
 	return txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts)
 }
@@ -1041,20 +1052,6 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 			invalidTxMeter.Mark(1)
 			continue
 		}
-		// Exclude transactions which fail the ingress filters
-		filtered := false
-		for _, filter := range pool.ingressFilters {
-			if !filter.FilterTx(pool.filterCtx, tx) {
-				errs[i] = core.ErrTxFilteredOut
-				log.Trace("Discarding filtered transaction", "hash", tx.Hash())
-				invalidTxMeter.Mark(1)
-				filtered = true
-				break
-			}
-		}
-		if filtered {
-			continue
-		}
 		// Accumulate all unknown transactions for deeper processing
 		news = append(news, tx)
 	}
@@ -1089,6 +1086,20 @@ func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction) ([]error, *accoun
 	dirty := newAccountSet(pool.signer)
 	errs := make([]error, len(txs))
 	for i, tx := range txs {
+		// Exclude transactions which fail the ingress filters
+		filtered := false
+		for _, filter := range pool.ingressFilters {
+			if !filter.FilterTx(pool.filterCtx, tx) {
+				errs[i] = core.ErrTxFilteredOut
+				log.Trace("Discarding filtered transaction", "hash", tx.Hash())
+				invalidTxMeter.Mark(1)
+				filtered = true
+				break
+			}
+		}
+		if filtered {
+			continue
+		}
 		replaced, err := pool.add(tx)
 		errs[i] = err
 		if err == nil && !replaced {
@@ -1158,12 +1169,6 @@ func (pool *LegacyPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 		Type: tx.Type(),
 		Size: tx.Size(),
 	}
-}
-
-// GetBlobs is not supported by the legacy transaction pool, it is just here to
-// implement the txpool.SubPool interface.
-func (pool *LegacyPool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
-	return nil, nil
 }
 
 // Has returns an indicator whether txpool has a transaction cached with the
@@ -1359,6 +1364,21 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	}
 	pool.mu.Lock()
 	if reset != nil {
+		if reset.newHead != nil && reset.oldHead != nil {
+			// Discard the transactions with the gas limit higher than the cap.
+			if pool.chainconfig.IsOsaka(reset.newHead.Number, reset.newHead.Time) && !pool.chainconfig.IsOsaka(reset.oldHead.Number, reset.oldHead.Time) {
+				var hashes []common.Hash
+				pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+					if tx.Gas() > params.MaxTxGas {
+						hashes = append(hashes, hash)
+					}
+					return true
+				})
+				for _, hash := range hashes {
+					pool.removeTx(hash, true, true)
+				}
+			}
+		}
 		// Reset from the old head to the new, rescheduling any reorged transactions
 		pool.reset(reset.oldHead, reset.newHead)
 
