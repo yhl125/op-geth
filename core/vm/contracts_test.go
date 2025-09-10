@@ -18,7 +18,6 @@ package vm
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -77,9 +76,9 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0b}): &p256Verify{},
 
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
-	common.BytesToAddress([]byte{0x13}):       &falconvrfy{},
-	common.BytesToAddress([]byte{0x14}):       &pureNTT{},        // Pure NTT (no caching)
-	common.BytesToAddress([]byte{0x15}):       &precomputedNTT{}, // Precomputed NTT (with caching)
+	common.BytesToAddress([]byte{0x12}):       &pureNTT{},        // Pure NTT (no caching)
+	common.BytesToAddress([]byte{0x13}):       &precomputedNTT{}, // Precomputed NTT (with caching)
+	common.BytesToAddress([]byte{0x14}):       &falconvrfy{},
 }
 
 // EIP-152 test vectors
@@ -503,7 +502,7 @@ func TestPrecompiledFalconVerify(t *testing.T) {
 			t.Fatalf("Failed to create ABI input: %v", err)
 		}
 
-		p := allPrecompiles[common.BytesToAddress([]byte{0x13})]
+		p := allPrecompiles[common.BytesToAddress([]byte{0x14})]
 		gas := p.RequiredGas(abiInput)
 
 		if gas != 2500 {
@@ -546,7 +545,7 @@ func TestPrecompiledFalconVerify(t *testing.T) {
 			t.Fatalf("Failed to create ABI input: %v", err)
 		}
 
-		p := allPrecompiles[common.BytesToAddress([]byte{0x13})]
+		p := allPrecompiles[common.BytesToAddress([]byte{0x14})]
 		gas := p.RequiredGas(abiInput)
 
 		result, _, err := RunPrecompiledContract(p, abiInput, gas, nil)
@@ -585,472 +584,186 @@ func BenchmarkPrecompiledFalconVerify(b *testing.B) {
 		Name:     "FalconVerify",
 	}
 
-	benchmarkPrecompiled("13", test, b)
-}
-
-// Helper function to create properly formatted input for NTT tests
-func createNTTInput(isForward bool, ringDegree uint32, modulus uint64, coefficients []uint64) []byte {
-	input := make([]byte, 1+4+8+len(coefficients)*8)
-
-	// Operation: 0 = forward NTT, 1 = inverse NTT
-	if isForward {
-		input[0] = 0
-	} else {
-		input[0] = 1
-	}
-
-	// Ring degree (4 bytes, big endian)
-	binary.BigEndian.PutUint32(input[1:5], ringDegree)
-
-	// Modulus (8 bytes, big endian)
-	binary.BigEndian.PutUint64(input[5:13], modulus)
-
-	// Coefficients (8 bytes each, big endian)
-	for i, coeff := range coefficients {
-		binary.BigEndian.PutUint64(input[13+i*8:13+(i+1)*8], coeff)
-	}
-
-	return input
-}
-
-// Test NTT precompile
-func TestPrecompiledNTT(t *testing.T) {
-	t.Run("NTT Forward Transform", func(t *testing.T) {
-		// Test parameters: ring degree 512, modulus 12289 (Falcon NTT-friendly)
-		ringDegree := uint32(512)
-		modulus := uint64(12289) // Falcon modulus from Python reference
-
-		// Create input: operation(1) + ring_degree(4) + modulus(8) + coefficients(512*8)
-		input := make([]byte, 1+4+8+512*8)
-
-		// Operation: 0 = forward NTT
-		input[0] = 0
-
-		// Ring degree (big endian)
-		binary.BigEndian.PutUint32(input[1:5], ringDegree)
-
-		// Modulus (big endian)
-		binary.BigEndian.PutUint64(input[5:13], modulus)
-
-		// Test coefficients: simple pattern
-		testCoeffs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-		for i, coeff := range testCoeffs {
-			binary.BigEndian.PutUint64(input[13+i*8:13+(i+1)*8], coeff)
-		}
-
-		// Run precompile
-		p := &precomputedNTT{}
-		gas := p.RequiredGas(input)
-		result, err := p.Run(input)
-
-		if err != nil {
-			t.Fatalf("NTT precompile failed: %v", err)
-		}
-
-		if len(result) != int(ringDegree)*8 {
-			t.Fatalf("Expected result length %d, got %d", ringDegree*8, len(result))
-		}
-
-		// Verify that result is different from input (NTT should transform the coefficients)
-		resultChanged := false
-		for i := 0; i < int(ringDegree); i++ {
-			resultCoeff := binary.BigEndian.Uint64(result[i*8 : (i+1)*8])
-			if resultCoeff != testCoeffs[i] {
-				resultChanged = true
-				break
-			}
-		}
-
-		if !resultChanged {
-			t.Error("NTT result should be different from input coefficients")
-		}
-
-		t.Logf("NTT forward transform succeeded, gas used: %d", gas)
-	})
-
-	t.Run("NTT Inverse Transform", func(t *testing.T) {
-		ringDegree := uint32(16)
-		modulus := uint64(12289) // Falcon modulus
-
-		// First, do a forward transform
-		inputForward := make([]byte, 1+4+8+16*8)
-		inputForward[0] = 0 // forward
-		binary.BigEndian.PutUint32(inputForward[1:5], ringDegree)
-		binary.BigEndian.PutUint64(inputForward[5:13], modulus)
-
-		testCoeffs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-		for i, coeff := range testCoeffs {
-			binary.BigEndian.PutUint64(inputForward[13+i*8:13+(i+1)*8], coeff)
-		}
-
-		p := &precomputedNTT{}
-		forwardResult, err := p.Run(inputForward)
-		if err != nil {
-			t.Fatalf("Forward NTT failed: %v", err)
-		}
-
-		// Now do inverse transform on the result
-		inputInverse := make([]byte, 1+4+8+16*8)
-		inputInverse[0] = 1 // inverse
-		binary.BigEndian.PutUint32(inputInverse[1:5], ringDegree)
-		binary.BigEndian.PutUint64(inputInverse[5:13], modulus)
-		copy(inputInverse[13:], forwardResult)
-
-		inverseResult, err := p.Run(inputInverse)
-		if err != nil {
-			t.Fatalf("Inverse NTT failed: %v", err)
-		}
-
-		// Verify that forward + inverse gives back original (approximately, due to modular arithmetic)
-		for i := 0; i < int(ringDegree); i++ {
-			originalCoeff := testCoeffs[i]
-			recoveredCoeff := binary.BigEndian.Uint64(inverseResult[i*8 : (i+1)*8])
-
-			// Allow for modular reduction
-			if recoveredCoeff != originalCoeff && recoveredCoeff != originalCoeff%modulus {
-				t.Errorf("Coefficient %d: expected %d or %d, got %d", i, originalCoeff, originalCoeff%modulus, recoveredCoeff)
-			}
-		}
-
-		t.Log("NTT round-trip (forward + inverse) succeeded")
-	})
-
-	t.Run("NTT Invalid Inputs", func(t *testing.T) {
-		p := &precomputedNTT{}
-
-		// Test empty input
-		_, err := p.Run([]byte{})
-		if err == nil {
-			t.Error("Expected error for empty input")
-		}
-
-		// Test invalid operation
-		invalidOp := make([]byte, 13)
-		invalidOp[0] = 2 // invalid operation
-		_, err = p.Run(invalidOp)
-		if err == nil {
-			t.Error("Expected error for invalid operation")
-		}
-
-		// Test invalid ring degree (not power of 2)
-		invalidDegree := make([]byte, 1+4+8+15*8)
-		invalidDegree[0] = 0
-		binary.BigEndian.PutUint32(invalidDegree[1:5], 15) // not power of 2
-		_, err = p.Run(invalidDegree)
-		if err == nil {
-			t.Error("Expected error for invalid ring degree")
-		}
-
-		t.Log("Invalid input tests passed")
-	})
-}
-
-// Test NTT transforms with specific cryptographic standards
-func TestNTTCryptographicStandards(t *testing.T) {
-	// Test parameters based on cryptographic standards
-	testCases := []struct {
-		name      string
-		degree    uint32
-		modulus   uint64
-		cryptoStd string
-	}{
-		{"Falcon-512", 512, 12289, "Falcon (NIST PQC)"},
-		{"Dilithium-256", 256, 8380417, "Dilithium (NIST PQC)"},
-		{"Kyber-128", 128, 3329, "Kyber (NIST PQC)"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Generate test coefficients
-			coeffs := make([]uint64, tc.degree)
-			for i := uint32(0); i < tc.degree; i++ {
-				coeffs[i] = uint64(i+1) % tc.modulus
-			}
-
-			// Test Precomputed NTT
-			t.Run("PrecomputedNTT", func(t *testing.T) {
-				input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
-
-				p := &precomputedNTT{}
-				gas := p.RequiredGas(input)
-				result, err := p.Run(input)
-
-				if err != nil {
-					t.Fatalf("Precomputed NTT failed for %s: %v", tc.cryptoStd, err)
-				}
-
-				if len(result) != int(tc.degree)*8 {
-					t.Fatalf("Expected result length %d, got %d", tc.degree*8, len(result))
-				}
-
-				// Verify result is different from input (NTT transform)
-				transformed := false
-				for i := uint32(0); i < tc.degree; i++ {
-					resultCoeff := binary.BigEndian.Uint64(result[i*8 : (i+1)*8])
-					if resultCoeff != coeffs[i] {
-						transformed = true
-						break
-					}
-				}
-
-				if !transformed {
-					t.Errorf("NTT should transform coefficients for %s", tc.cryptoStd)
-				}
-
-				t.Logf("✓ Precomputed NTT succeeded for %s (degree=%d, modulus=%d, gas=%d)",
-					tc.cryptoStd, tc.degree, tc.modulus, gas)
-			})
-
-			// Test Pure NTT
-			t.Run("PureNTT", func(t *testing.T) {
-				input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
-
-				p := &pureNTT{}
-				gas := p.RequiredGas(input)
-				result, err := p.Run(input)
-
-				if err != nil {
-					t.Fatalf("Pure NTT failed for %s: %v", tc.cryptoStd, err)
-				}
-
-				if len(result) != int(tc.degree)*8 {
-					t.Fatalf("Expected result length %d, got %d", tc.degree*8, len(result))
-				}
-
-				// Verify result is different from input (NTT transform)
-				transformed := false
-				for i := uint32(0); i < tc.degree; i++ {
-					resultCoeff := binary.BigEndian.Uint64(result[i*8 : (i+1)*8])
-					if resultCoeff != coeffs[i] {
-						transformed = true
-						break
-					}
-				}
-
-				if !transformed {
-					t.Errorf("NTT should transform coefficients for %s", tc.cryptoStd)
-				}
-
-				t.Logf("✓ Pure NTT succeeded for %s (degree=%d, modulus=%d, gas=%d)",
-					tc.cryptoStd, tc.degree, tc.modulus, gas)
-			})
-
-			// Test round-trip: Forward + Inverse NTT
-			t.Run("RoundTrip", func(t *testing.T) {
-				// Forward transform
-				forwardInput := createNTTInput(true, tc.degree, tc.modulus, coeffs)
-				p := &precomputedNTT{}
-				forwardResult, err := p.Run(forwardInput)
-				if err != nil {
-					t.Fatalf("Forward NTT failed: %v", err)
-				}
-
-				// Extract transformed coefficients
-				transformedCoeffs := make([]uint64, tc.degree)
-				for i := uint32(0); i < tc.degree; i++ {
-					transformedCoeffs[i] = binary.BigEndian.Uint64(forwardResult[i*8 : (i+1)*8])
-				}
-
-				// Inverse transform
-				inverseInput := createNTTInput(false, tc.degree, tc.modulus, transformedCoeffs)
-				inverseResult, err := p.Run(inverseInput)
-				if err != nil {
-					t.Fatalf("Inverse NTT failed: %v", err)
-				}
-
-				// Verify round-trip recovery
-				maxError := uint64(0)
-				for i := uint32(0); i < tc.degree; i++ {
-					original := coeffs[i]
-					recovered := binary.BigEndian.Uint64(inverseResult[i*8 : (i+1)*8])
-
-					// Allow for modular reduction
-					if recovered != original && recovered != original%tc.modulus {
-						error := uint64(0)
-						if recovered > original {
-							error = recovered - original
-						} else {
-							error = original - recovered
-						}
-						if error > maxError {
-							maxError = error
-						}
-
-						// Check if difference is due to modular arithmetic
-						if (original % tc.modulus) != (recovered % tc.modulus) {
-							t.Errorf("Round-trip failed at coefficient %d for %s: original=%d, recovered=%d",
-								i, tc.cryptoStd, original, recovered)
-						}
-					}
-				}
-
-				t.Logf("✓ Round-trip test passed for %s (max_error=%d)", tc.cryptoStd, maxError)
-			})
-		})
-	}
-}
-
-// Benchmark NTT transforms for cryptographic standards
-func BenchmarkNTTCryptographicStandards(b *testing.B) {
-	testCases := []struct {
-		name      string
-		degree    uint32
-		modulus   uint64
-		cryptoStd string
-	}{
-		{"Falcon-512", 512, 12289, "Falcon"},
-		{"Dilithium-256", 256, 8380417, "Dilithium"},
-		{"Kyber-128", 128, 3329, "Kyber"},
-	}
-
-	for _, tc := range testCases {
-		// Generate test coefficients
-		coeffs := make([]uint64, tc.degree)
-		for i := uint32(0); i < tc.degree; i++ {
-			coeffs[i] = uint64(i+1) % tc.modulus
-		}
-		input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
-
-		// Benchmark Precomputed NTT
-		b.Run("Precomputed-"+tc.name, func(b *testing.B) {
-			p := &precomputedNTT{}
-			gas := p.RequiredGas(input)
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				result, err := p.Run(input)
-				if err != nil {
-					b.Fatalf("Precomputed NTT failed: %v", err)
-				}
-				_ = result // Prevent optimization
-			}
-
-			b.ReportMetric(float64(gas), "gas/op")
-			b.ReportMetric(float64(gas)/b.Elapsed().Seconds()*float64(b.N)/1e6, "mgas/s")
-		})
-
-		// Benchmark Pure NTT
-		b.Run("Pure-"+tc.name, func(b *testing.B) {
-			p := &pureNTT{}
-			gas := p.RequiredGas(input)
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				result, err := p.Run(input)
-				if err != nil {
-					b.Fatalf("Pure NTT failed: %v", err)
-				}
-				_ = result // Prevent optimization
-			}
-
-			b.ReportMetric(float64(gas), "gas/op")
-			b.ReportMetric(float64(gas)/b.Elapsed().Seconds()*float64(b.N)/1e6, "mgas/s")
-		})
-	}
-}
-
-// Test NTT parameter validation
-func TestNTTParameterValidation(t *testing.T) {
-	testCases := []struct {
-		name          string
-		degree        uint32
-		modulus       uint64
-		shouldFail    bool
-		expectedError string
-	}{
-		{"Falcon-Valid", 512, 12289, false, ""},
-		{"Dilithium-Valid", 256, 8380417, false, ""},
-		{"Kyber-Valid", 128, 3329, false, ""},
-		{"InvalidDegree-NotPowerOf2", 100, 12289, true, "invalid ring degree"},
-		{"InvalidDegree-TooSmall", 8, 12289, true, "invalid ring degree"},
-		{"InvalidModulus-Zero", 256, 0, true, "invalid modulus"},
-		{"InvalidModulus-TooLarge", 256, 1 << 62, true, "invalid modulus"},
-		{"InvalidModulus-NotNTTFriendly", 256, 12290, true, "modulus must be congruent to 1"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Generate simple test coefficients
-			coeffs := make([]uint64, tc.degree)
-			for i := uint32(0); i < tc.degree && i < 100; i++ {
-				if tc.modulus > 0 {
-					coeffs[i] = uint64(i+1) % tc.modulus
-				} else {
-					coeffs[i] = uint64(i + 1)
-				}
-			}
-
-			input := createNTTInput(true, tc.degree, tc.modulus, coeffs)
-
-			p := &precomputedNTT{}
-			_, err := p.Run(input)
-
-			if tc.shouldFail {
-				if err == nil {
-					t.Errorf("Expected error for %s, but got none", tc.name)
-				} else if tc.expectedError != "" && !bytes.Contains([]byte(err.Error()), []byte(tc.expectedError)) {
-					t.Errorf("Expected error containing '%s', got: %v", tc.expectedError, err)
-				} else {
-					t.Logf("✓ Correctly rejected invalid parameters: %v", err)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected success for %s, got error: %v", tc.name, err)
-				} else {
-					t.Logf("✓ Correctly accepted valid parameters for %s", tc.name)
-				}
-			}
-		})
-	}
-}
-
-// Benchmark NTT precompiles using precompiledTest format
-func BenchmarkPrecompiledNTTPure(b *testing.B) {
-	ringDegree := 512
-	modulus := uint64(12289)
-	coeffs := make([]uint64, ringDegree)
-	for i := 0; i < ringDegree; i++ {
-		coeffs[i] = uint64(i)
-	}
-	input := createNTTInput(true, uint32(ringDegree), modulus, coeffs)
-
-	// The expected output is generated by running the NTT function once.
-	// This is to ensure the benchmark is testing against a known correct output.
-	p := &pureNTT{}
-	expected, err := p.Run(input)
-	if err != nil {
-		b.Fatalf("Failed to generate expected output for pureNTT: %v", err)
-	}
-
-	test := precompiledTest{
-		Input:    common.Bytes2Hex(input),
-		Expected: common.Bytes2Hex(expected),
-		Name:     fmt.Sprintf("PureNTT-%d-%d", ringDegree, modulus),
-	}
 	benchmarkPrecompiled("14", test, b)
 }
 
-func BenchmarkPrecompiledNTTPrecomputed(b *testing.B) {
-	ringDegree := 512
-	modulus := uint64(12289)
-	coeffs := make([]uint64, ringDegree)
-	for i := 0; i < ringDegree; i++ {
-		coeffs[i] = uint64(i)
+// Test NTT precompile with malformed inputs
+func TestPrecompileNTTMalformedInput(t *testing.T) {
+	// NTT malformed input test vectors
+	var nttMalformedInputTests = []precompiledFailureTest{
+		{
+			Input:         "",
+			ExpectedError: "input too short",
+			Name:          "empty input",
+		},
+		{
+			Input:         "00",
+			ExpectedError: "input too short",
+			Name:          "too short input",
+		},
+		{
+			Input:         "02000000100000000000000011",
+			ExpectedError: "invalid operation: must be 0 (forward) or 1 (inverse)",
+			Name:          "invalid operation",
+		},
+		{
+			Input:         "00000000080000000000000011",
+			ExpectedError: "invalid ring degree: must be power of 2 >= 16",
+			Name:          "invalid ring degree (too small)",
+		},
+		{
+			Input:         "0000000011000000000000001100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			ExpectedError: "invalid ring degree: must be power of 2 >= 16",
+			Name:          "invalid ring degree (not power of 2)",
+		},
+		{
+			Input:         "00000000100000000000000000",
+			ExpectedError: "modulus cannot be zero",
+			Name:          "zero modulus",
+		},
+		{
+			Input:         "000000001000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			ExpectedError: "modulus must be congruent to 1 mod 2*ringDegree",
+			Name:          "non NTT-friendly modulus",
+		},
+		{
+			Input:         "00000000100000000000000021000000000000000100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000000700000000000000080000000000000009000000000000000a000000000000000b000000000000000c000000000000000d000000000000000e000000000000000f0000000000000022",
+			ExpectedError: "coefficient 15 exceeds modulus",
+			Name:          "coefficient exceeds modulus",
+		},
 	}
-	input := createNTTInput(true, uint32(ringDegree), modulus, coeffs)
 
-	// The expected output is generated by running the NTT function once.
-	// This is to ensure the benchmark is testing against a known correct output.
-	p := &precomputedNTT{}
-	expected, err := p.Run(input)
-	if err != nil {
-		b.Fatalf("Failed to generate expected output for precomputedNTT: %v", err)
+	// Test PureNTT (0x12) malformed inputs
+	t.Run("PureNTT", func(t *testing.T) {
+		for _, test := range nttMalformedInputTests {
+			testPrecompiledFailure("12", test, t)
+		}
+	})
+
+	// Test PrecomputedNTT (0x13) malformed inputs
+	t.Run("PrecomputedNTT", func(t *testing.T) {
+		for _, test := range nttMalformedInputTests {
+			testPrecompiledFailure("13", test, t)
+		}
+	})
+}
+
+// Test NTT precompile with valid inputs
+func TestPrecompiledNTT(t *testing.T) {
+	// Test cases
+	testCases := []precompiledTest{
+		{
+			Input:    "00000000100000000000000061000000000000000100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000000700000000000000080000000000000009000000000000000a000000000000000b000000000000000c000000000000000d000000000000000e000000000000000f0000000000000010",
+			Expected: "00000000000000450000000000000028000000000000001d000000000000004c000000000000004c0000000000000001000000000000001600000000000000120000000000000045000000000000004a000000000000002b000000000000003800000000000000200000000000000004000000000000001e0000000000000038",
+			Name:     "forward NTT ring degree 16",
+			Gas:      70000,
+		},
+		{
+			Input:    "0100000010000000000000006100000000000000450000000000000028000000000000001d000000000000004c000000000000004c0000000000000001000000000000001600000000000000120000000000000045000000000000004a000000000000002b000000000000003800000000000000200000000000000004000000000000001e0000000000000038",
+			Expected: "000000000000000100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000000700000000000000080000000000000009000000000000000a000000000000000b000000000000000c000000000000000d000000000000000e000000000000000f0000000000000010",
+			Name:     "inverse NTT ring degree 16",
+			Gas:      70000,
+		},
 	}
 
-	test := precompiledTest{
-		Input:    common.Bytes2Hex(input),
-		Expected: common.Bytes2Hex(expected),
-		Name:     fmt.Sprintf("PrecomputedNTT-%d-%d", ringDegree, modulus),
+	// Test PureNTT (0x12)
+	t.Run("PureNTT", func(t *testing.T) {
+		for _, test := range testCases {
+			testPrecompiled("12", test, t)
+		}
+	})
+
+	// Test PrecomputedNTT (0x13)
+	t.Run("PrecomputedNTT", func(t *testing.T) {
+		for _, test := range testCases {
+			testPrecompiled("13", test, t)
+		}
+	})
+}
+
+// Benchmarks the NTT precompile
+func BenchmarkPrecompiledNTT(bench *testing.B) {
+	// Basic ring degree 16 benchmark
+	nttTest := precompiledTest{
+		Input:    "00000000100000000000000061000000000000000100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000000700000000000000080000000000000009000000000000000a000000000000000b000000000000000c000000000000000d000000000000000e000000000000000f0000000000000010",
+		Expected: "00000000000000450000000000000028000000000000001d000000000000004c000000000000004c0000000000000001000000000000001600000000000000120000000000000045000000000000004a000000000000002b000000000000003800000000000000200000000000000004000000000000001e0000000000000038",
+		Name:     "NTT-ring16",
+		Gas:      70000,
 	}
-	benchmarkPrecompiled("15", test, b)
+
+	// Benchmark PureNTT (0x12)
+	bench.Run("PureNTT", func(b *testing.B) {
+		benchmarkPrecompiled("12", nttTest, b)
+	})
+
+	// Benchmark PrecomputedNTT (0x13)
+	bench.Run("PrecomputedNTT", func(b *testing.B) {
+		benchmarkPrecompiled("13", nttTest, b)
+	})
+}
+
+// Benchmark NTT precompile with crypto standards
+func BenchmarkPrecompiledNTTCryptoStandards(bench *testing.B) {
+	// Pre-computed test cases with actual NTT results
+	testCases := []precompiledTest{
+		{
+			Name: "NTT-Falcon-512",
+			Gas:  70000,
+			Input: func() string {
+				operation := "00"
+				ringDegree := fmt.Sprintf("%08x", 512)
+				modulus := fmt.Sprintf("%016x", 12289)
+				coeffs := ""
+				for i := 1; i <= 512; i++ {
+					coeffs += fmt.Sprintf("%016x", uint64(i)%12289)
+				}
+				return operation + ringDegree + modulus + coeffs
+			}(),
+			Expected: "00000000000018ce000000000000025300000000000025f3000000000000039000000000000028020000000000002391000000000000209f000000000000077a00000000000015b1000000000000048d0000000000002d190000000000000b210000000000001dd70000000000000fe600000000000001de000000000000031700000000000018f9000000000000095f0000000000000b050000000000002fb6000000000000154b00000000000029e0000000000000149d0000000000002a990000000000001c070000000000000896000000000000007a00000000000028e900000000000028570000000000000bbf00000000000027cf000000000000143e00000000000018a500000000000005460000000000002a94000000000000213a0000000000002e030000000000000b390000000000001922000000000000162c000000000000019100000000000003ff0000000000000b6a0000000000002d6100000000000027f00000000000002f7d00000000000003ab0000000000001df40000000000000565000000000000144500000000000018f700000000000029b400000000000008b1000000000000043e0000000000000e3e0000000000001be60000000000000bab000000000000034d000000000000245800000000000017b80000000000001dbf0000000000002aae00000000000001440000000000002fbd00000000000007c4000000000000151c00000000000014f500000000000018d00000000000000947000000000000071e000000000000039d000000000000060c0000000000001700000000000000182800000000000022ff0000000000000384000000000000257d00000000000013070000000000000c760000000000000d3700000000000009c90000000000000bdc00000000000019500000000000000d400000000000001e8800000000000000fe000000000000257100000000000022dd0000000000001c0c000000000000023d000000000000065e0000000000002c940000000000001bd400000000000023340000000000002cdf00000000000013c300000000000011410000000000002d83000000000000083e000000000000149c0000000000002a7700000000000029d100000000000020c40000000000002aa800000000000010510000000000001f0900000000000016a70000000000002d1800000000000026d1000000000000239e00000000000024660000000000001efe0000000000001d4e000000000000190500000000000019f7000000000000021100000000000011fd000000000000093700000000000028b100000000000021c30000000000002a97000000000000293200000000000006950000000000000de30000000000000e0d000000000000044b0000000000001c160000000000000bdd0000000000002e4c00000000000012400000000000000236000000000000103800000000000002700000000000000cb60000000000002459000000000000014000000000000017860000000000000b7c0000000000000a16000000000000193000000000000025ec00000000000001e90000000000000a6b0000000000000a38000000000000220700000000000016230000000000002f160000000000002335000000000000062c00000000000019950000000000000bf4000000000000230c00000000000024ec0000000000002e720000000000000b9800000000000002a40000000000002cf100000000000021a9000000000000189d00000000000024b60000000000000da600000000000016660000000000000c2900000000000019a000000000000011ab0000000000000e6300000000000001010000000000002b8a000000000000072700000000000021e40000000000002849000000000000177a00000000000008b70000000000002c79000000000000024700000000000015bc0000000000000ff10000000000000a4c000000000000130f000000000000086a0000000000000375000000000000026a000000000000022a0000000000001c2b0000000000000db70000000000000e6c000000000000096a0000000000001bd8000000000000299100000000000019bc0000000000000a4a0000000000000dd30000000000000d330000000000001c400000000000000aae0000000000001aba0000000000001edd0000000000001cd200000000000008910000000000001a100000000000000a7500000000000028970000000000002a4400000000000012840000000000001ba900000000000003cc00000000000028230000000000000b010000000000002dfd00000000000003da000000000000267c00000000000027f60000000000001cc20000000000001208000000000000227500000000000026880000000000000c480000000000002b8b000000000000089b000000000000095400000000000012be0000000000001b470000000000000cae0000000000000c520000000000001d3c0000000000001e080000000000002a4b000000000000088600000000000016a000000000000015f900000000000006790000000000002b5d0000000000000f090000000000000ee200000000000026c30000000000000eb50000000000000d2d000000000000149f0000000000000ac3000000000000117a0000000000002e2200000000000019cc000000000000015d00000000000010130000000000000c5e00000000000027510000000000001c740000000000000aee00000000000024a900000000000028740000000000002e6a000000000000280e00000000000012f500000000000026fd0000000000002c7f0000000000002f770000000000001a2c0000000000001de40000000000002b060000000000001f10000000000000113500000000000002b70000000000002e4e00000000000023e0000000000000099d0000000000001fcd00000000000020cb0000000000002f8200000000000015310000000000000be600000000000018f600000000000003a000000000000021dd0000000000001877000000000000009800000000000010d50000000000001b260000000000002cd4000000000000104700000000000019dc000000000000071600000000000029d6000000000000280800000000000024fb00000000000027dc000000000000255f00000000000027960000000000000aef0000000000000e0f0000000000000cf30000000000002b660000000000000aa70000000000000007000000000000138b0000000000000cd0000000000000263300000000000010430000000000002aa10000000000000f7800000000000017f7000000000000205500000000000013fd0000000000000e310000000000002029000000000000232c0000000000000640000000000000235a00000000000002790000000000000a1500000000000020290000000000001dff000000000000123800000000000004810000000000000edc0000000000000bd1000000000000173a00000000000015b4000000000000098100000000000009c30000000000001b36000000000000025600000000000023e400000000000025e0000000000000019e00000000000012ca0000000000000dfb00000000000029810000000000002c3f000000000000104b000000000000110c000000000000222a0000000000002de500000000000014c40000000000001fe5000000000000203f0000000000000bc900000000000025e100000000000007bb0000000000001344000000000000022e0000000000002b6d00000000000026340000000000002ffd00000000000014fe00000000000001010000000000001e680000000000001fdb00000000000002500000000000001c0100000000000029ae0000000000000c5100000000000029be00000000000005380000000000000a780000000000000d0a00000000000011e000000000000029a200000000000020f400000000000024a700000000000015050000000000001f7a00000000000022c60000000000001103000000000000025500000000000003e1000000000000000e00000000000029ad000000000000211500000000000014b80000000000000abb00000000000009890000000000002980000000000000123a0000000000000d5500000000000006ca000000000000063600000000000010fe0000000000002b770000000000002ce50000000000000f630000000000002138000000000000244a0000000000002662000000000000244a0000000000000e050000000000002e4e0000000000002dd1000000000000297f000000000000012900000000000009af000000000000067300000000000006260000000000000c5400000000000004010000000000000faf0000000000002810000000000000296c0000000000001336000000000000092000000000000000530000000000000f5500000000000002690000000000000d750000000000001ee00000000000001aab000000000000056b0000000000001c910000000000001c5b00000000000004070000000000000dea0000000000001b8600000000000019a70000000000002f04000000000000282e000000000000232000000000000014550000000000001d75000000000000297f000000000000119b0000000000002f9f0000000000002e0f00000000000010d1000000000000073800000000000022eb000000000000169c00000000000022d90000000000000a0400000000000004b600000000000023670000000000002d08000000000000226b0000000000002f760000000000000fdf000000000000135800000000000011690000000000002d330000000000000e940000000000000a1200000000000012f800000000000028e000000000000015700000000000000b230000000000001874000000000000279a00000000000002160000000000002a7f00000000000008d8000000000000274c00000000000007e60000000000001742000000000000131a0000000000001aa600000000000011560000000000000cae000000000000136900000000000011bd000000000000101d000000000000191a000000000000231d0000000000001a3b00000000000029eb0000000000002c9a00000000000010040000000000000f1200000000000025e10000000000002d6a00000000000019cf0000000000000a770000000000001efd0000000000001d2b000000000000266b000000000000249d00000000000004d3000000000000083600000000000007600000000000000feb0000000000002290000000000000264c0000000000000a530000000000001f4f000000000000124c000000000000077800000000000004840000000000001f400000000000001ea70000000000002f8a0000000000001618000000000000205a000000000000105e0000000000000dd70000000000002e6300000000000011a80000000000000acb0000000000000a19000000000000245200000000000001c000000000000007ca0000000000002b6300000000000015a90000000000000ea00000000000002d720000000000002f7d0000000000000b620000000000001b710000000000001997000000000000249a00000000000029060000000000001d7100000000000023a800000000000019f200000000000002fb0000000000001dce",
+		},
+		{
+			Name: "NTT-Kyber-128",
+			Gas:  70000,
+			Input: func() string {
+				operation := "00"
+				ringDegree := fmt.Sprintf("%08x", 128)
+				modulus := fmt.Sprintf("%016x", 3329)
+				coeffs := ""
+				for i := 1; i <= 128; i++ {
+					coeffs += fmt.Sprintf("%016x", uint64(i)%3329)
+				}
+				return operation + ringDegree + modulus + coeffs
+			}(),
+			Expected: "00000000000001100000000000000ae4000000000000099300000000000003da0000000000000a0e00000000000002f3000000000000062300000000000002e20000000000000c87000000000000085800000000000007790000000000000667000000000000065700000000000004e800000000000007c3000000000000044800000000000001c9000000000000001b0000000000000cd500000000000007d60000000000000bdd0000000000000948000000000000082300000000000002a400000000000002ec00000000000003e00000000000000079000000000000031300000000000008900000000000000a3300000000000003e200000000000004bc00000000000007ec0000000000000bae00000000000004990000000000000652000000000000045e00000000000006c50000000000000c1b00000000000005ca00000000000008c70000000000000cdf0000000000000be800000000000008280000000000000a3c0000000000000b9a000000000000033c00000000000005aa0000000000000668000000000000058d000000000000046d0000000000000921000000000000005200000000000003fd00000000000009f000000000000009c800000000000002b80000000000000750000000000000024600000000000000e600000000000007ff000000000000050a00000000000008130000000000000ab3000000000000034800000000000001070000000000000cd50000000000000ad5000000000000000f000000000000054b000000000000065f0000000000000b14000000000000067500000000000002150000000000000be500000000000004f400000000000007770000000000000c6400000000000003900000000000000a360000000000000bc40000000000000a85000000000000020b0000000000000cef000000000000071000000000000001740000000000000a310000000000000373000000000000013e0000000000000c680000000000000b5f0000000000000cf20000000000000b9c000000000000053900000000000001f4000000000000052e00000000000004b20000000000000a490000000000000b690000000000000c8d00000000000005020000000000000be7000000000000081e000000000000033f000000000000024f0000000000000820000000000000074500000000000003c80000000000000182000000000000089e00000000000008350000000000000399000000000000005d00000000000002b10000000000000ca0000000000000097400000000000003040000000000000a8800000000000007140000000000000475000000000000016700000000000006d2000000000000032800000000000009d40000000000000c1500000000000009cc000000000000016b0000000000000b17",
+		},
+		{
+			Name: "NTT-Dilithium-256",
+			Gas:  70000,
+			Input: func() string {
+				operation := "00"
+				ringDegree := fmt.Sprintf("%08x", 256)
+				modulus := fmt.Sprintf("%016x", 8380417)
+				coeffs := ""
+				for i := 1; i <= 256; i++ {
+					coeffs += fmt.Sprintf("%016x", uint64(i)%8380417)
+				}
+				return operation + ringDegree + modulus + coeffs
+			}(),
+			Expected: "00000000004768f700000000006fd627000000000031579a0000000000401b0f000000000024b42400000000003eaa8e00000000002549f4000000000005811d0000000000307ec700000000002d6ba30000000000141b4400000000006c48b50000000000086cc100000000001336a700000000003f7f25000000000023edb100000000000307a10000000000298239000000000013becb0000000000229cca000000000062c96f0000000000255b2a000000000007feec0000000000187a800000000000148b6e000000000038fb8d00000000007881c300000000005188a6000000000073dc96000000000046207c00000000000c2ae6000000000060c3040000000000175427000000000064337700000000005db8cf0000000000200253000000000028312f000000000002e11500000000000d940c00000000000b740600000000005bdd17000000000058d4000000000000722e3c00000000006a8bf500000000002377200000000000413b6c00000000003aa12a00000000006a08a500000000006fb00c00000000006c62b20000000000026eb200000000003faf68000000000074b6750000000000775d810000000000698e31000000000074aed300000000002be95e000000000039d44600000000006ca4120000000000388aa800000000000a926000000000006691eb00000000007e964d00000000001b0fd3000000000050387c00000000005ee9c2000000000011b97600000000001e9e47000000000039a7dc00000000005415b2000000000056ce8c0000000000194f81000000000010953500000000003d760b00000000005de3f300000000001907c1000000000005c979000000000018f6720000000000763772000000000039e72d00000000003866f800000000005065b800000000004c03a700000000000867d5000000000023244700000000002d1289000000000068780800000000007ba48900000000004edaa00000000000514091000000000040c5f600000000004cd7a8000000000067f6a500000000002a48e900000000007383cd000000000066feb60000000000302e47000000000074f85d0000000000483ba500000000004334ea000000000014c6bb00000000006f7ca600000000002cb6f400000000000d83e600000000003b446000000000001d4eb8000000000023ba61000000000034eb38000000000058296300000000006c1331000000000041022c00000000002445980000000000122b96000000000071796600000000004eba3d00000000006964270000000000589a89000000000056707800000000006db015000000000059c60200000000007306120000000000096dca00000000001ae6bf000000000029e9dc00000000006269b800000000000a06a900000000002e890d00000000001d9f150000000000096b7a00000000000d2bcc000000000027f0d600000000002395f90000000000151f9e00000000001a01a100000000006dd6e300000000004b78c4000000000002622a000000000047d9c6000000000008b21700000000006501ec000000000054d160000000000017ce1e000000000053bd0d00000000006fb9c2000000000009f16600000000006d181600000000006490880000000000332365000000000077cee000000000004cf7f100000000005525fd000000000059054300000000005077ac00000000005ba878000000000019b65b000000000036a5130000000000676022000000000064c65f00000000007fccbf0000000000013932000000000042e576000000000053c84c00000000002e71ac00000000003bdafa000000000079e6c900000000006bb1b6000000000011b60d000000000003951e000000000041ae7c000000000024820a00000000007eb5a80000000000677b5000000000000775de00000000003c76090000000000311ff2000000000028952600000000005cfeef00000000000ee455000000000052606900000000006be427000000000042edfe000000000019c3ae00000000005a72a1000000000043b45f00000000006d20920000000000384bde000000000036989b000000000069759a00000000004364eb000000000018486e00000000001ce2bf00000000001dc2d500000000001427ec0000000000298065000000000004b6da000000000016ff05000000000004658f000000000069a0b00000000000196fe1000000000074617b00000000004fa6310000000000427a42000000000060ffe500000000003886f20000000000620a1d00000000005ca46600000000007023fe000000000015d6b3000000000015584100000000001b189f0000000000561e1800000000005009e700000000007b885e00000000002204bb00000000000b35bf0000000000463b19000000000022ada00000000000736c6d0000000000741d66000000000063820100000000001f52c7000000000038b54800000000007ef440000000000051b0f000000000002bc546000000000059367400000000005015fd000000000067895f0000000000620801000000000012ae2b000000000021f1d3000000000074823b0000000000287797000000000067d58400000000007a9c1f00000000004e8de700000000005371200000000000648ce000000000007e11a500000000007cbcee00000000007a127b000000000044f6b4000000000033661e000000000067464e000000000034e443000000000077d81300000000007f90a400000000002b72f100000000000bb9ee00000000002dc3aa000000000041adb600000000007c15970000000000582204000000000042d9c400000000002d90fe00000000005c796b",
+		},
+	}
+
+	// Benchmark PureNTT (0x12)
+	bench.Run("PureNTT", func(b *testing.B) {
+		for _, test := range testCases {
+			benchmarkPrecompiled("12", test, b)
+		}
+	})
+
+	// Benchmark PrecomputedNTT (0x13)
+	bench.Run("PrecomputedNTT", func(b *testing.B) {
+		for _, test := range testCases {
+			benchmarkPrecompiled("13", test, b)
+		}
+	})
 }

@@ -6,9 +6,9 @@ This is a fork of `op-geth` that includes precompiled contracts for Falcon signa
 
 The following precompiled contracts have been added at the specified addresses in `core/vm/contracts.go`:
 
--   `0x13`: **falconvrfy**: Verifies a Falcon-1024 signature.
--   `0x14`: **pureNTT**: A pure implementation of NTT that computes parameters on each call without caching.
--   `0x15`: **precomputedNTT**: An optimized NTT implementation that uses pre-computed and cached ring parameters for specific cryptographic standards (Falcon-512, Dilithium, Kyber).
+-   `0x12`: **pureNTT**: A pure implementation of NTT that computes parameters on each call without caching.
+-   `0x13`: **precomputedNTT**: An optimized NTT implementation that uses pre-computed and cached ring parameters for specific cryptographic standards (Falcon-512, Dilithium, Kyber).
+-   `0x14`: **falconvrfy**: Verifies a Falcon-1024 signature.
 
 Corresponding tests and benchmarks are implemented in `core/vm/contracts_test.go`.
 

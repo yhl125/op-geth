@@ -226,9 +226,9 @@ var PrecompiledContractsIsthmus = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
-	common.BytesToAddress([]byte{0x13}):       &falconvrfy{},
-	common.BytesToAddress([]byte{0x14}):       &pureNTT{},        // Pure NTT (no caching)
-	common.BytesToAddress([]byte{0x15}):       &precomputedNTT{}, // Precomputed NTT (with caching)
+	common.BytesToAddress([]byte{0x12}):       &pureNTT{},        // Pure NTT (no caching)
+	common.BytesToAddress([]byte{0x13}):       &precomputedNTT{}, // Precomputed NTT (with caching)
+	common.BytesToAddress([]byte{0x14}):       &falconvrfy{},
 }
 
 var (
@@ -1531,9 +1531,9 @@ func (c *pureNTT) Run(input []byte) ([]byte, error) {
 	// Extract modulus (8 bytes, big endian)
 	modulus := binary.BigEndian.Uint64(input[5:13])
 
-	// Validate modulus (must be NTT-friendly prime: q ≡ 1 (mod 2*ringDegree))
-	if modulus == 0 || modulus > (1<<61) {
-		return nil, errors.New("invalid modulus")
+	// Validate modulus (must be non-zero and NTT-friendly prime)
+	if modulus == 0 {
+		return nil, errors.New("modulus cannot be zero")
 	}
 
 	// Check if modulus is congruent to 1 mod 2*ringDegree (NTT-friendly condition)
@@ -1551,7 +1551,7 @@ func (c *pureNTT) Run(input []byte) ([]byte, error) {
 	coeffs := make([]uint64, ringDegree)
 	for i := 0; i < int(ringDegree); i++ {
 		coeffs[i] = binary.BigEndian.Uint64(input[13+i*8 : 13+(i+1)*8])
-		// Ensure coefficient is within modulus
+		// Ensure coefficient is within modulus for predictable behavior
 		if coeffs[i] >= modulus {
 			return nil, fmt.Errorf("coefficient %d exceeds modulus", i)
 		}
@@ -1713,9 +1713,9 @@ func (c *precomputedNTT) Run(input []byte) ([]byte, error) {
 	// Extract modulus (8 bytes, big endian)
 	modulus := binary.BigEndian.Uint64(input[5:13])
 
-	// Validate modulus (must be NTT-friendly prime: q ≡ 1 (mod 2*ringDegree))
-	if modulus == 0 || modulus > (1<<61) {
-		return nil, errors.New("invalid modulus")
+	// Validate modulus (must be non-zero and NTT-friendly prime)
+	if modulus == 0 {
+		return nil, errors.New("modulus cannot be zero")
 	}
 
 	// Check if modulus is congruent to 1 mod 2*ringDegree (NTT-friendly condition)
@@ -1733,7 +1733,7 @@ func (c *precomputedNTT) Run(input []byte) ([]byte, error) {
 	coeffs := make([]uint64, ringDegree)
 	for i := 0; i < int(ringDegree); i++ {
 		coeffs[i] = binary.BigEndian.Uint64(input[13+i*8 : 13+(i+1)*8])
-		// Ensure coefficient is within modulus
+		// Ensure coefficient is within modulus for predictable behavior
 		if coeffs[i] >= modulus {
 			return nil, fmt.Errorf("coefficient %d exceeds modulus", i)
 		}
