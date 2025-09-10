@@ -14,7 +14,7 @@ Corresponding tests and benchmarks are implemented in `core/vm/contracts_test.go
 
 ### Gas Costing
 
-The gas costs for the new precompiles were determined by targeting a performance of approximately 50 Mgas/s, similar to the existing `ecrecover` precompile.
+The gas costs for the new precompiles were determined by targeting a performance of approximately 48-50 mgas/s, similar to the existing `ecrecover` precompile.
 
 -   **pureNTT**: A fixed gas cost of 70,000 is applied. This is because the majority of the computation is spent on generating the NTT table, making the cost largely independent of input parameters.
 -   **precomputedNTT**: Gas cost is calculated dynamically based on the ring degree (`N`) to reflect the `O(N log N)` complexity of the NTT operation.
@@ -23,8 +23,8 @@ The gas costs for the new precompiles were determined by targeting a performance
 
 Benchmarks were run on an `Intel(R) Xeon(R) CPU @ 2.20GHz`. For detailed results, please see the files below:
 
-- [Ecrecover Benchmark Test Results](./benchmark_results/ecrecover_benchmark_test)
-- [NTT Benchmark Test Results](./benchmark_results/ntt_benchmark_test)
+- [Ecrecover Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledEcrecover)
+- [NTT Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledNTTCryptoStandards)
 
 ---
 

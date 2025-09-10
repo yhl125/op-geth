@@ -1,0 +1,36 @@
+goos: linux
+goarch: amd64
+pkg: github.com/ethereum/go-ethereum/core/vm
+cpu: Intel(R) Xeon(R) CPU @ 2.20GHz
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Falcon-512-Gas=70000-4                   2404           1479817 ns/op             70000 gas/op               47.30 mgas/s      494253 B/op      28994 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Falcon-512-Gas=70000-4                   2379           1513366 ns/op             70000 gas/op               46.25 mgas/s      494253 B/op      28994 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Falcon-512-Gas=70000-4                   2496           1488835 ns/op             70000 gas/op               47.01 mgas/s      494253 B/op      28994 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Falcon-512-Gas=70000-4                   2444           1500186 ns/op             70000 gas/op               46.66 mgas/s      494251 B/op      28994 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Falcon-512-Gas=70000-4                   2403           1476106 ns/op             70000 gas/op               47.42 mgas/s      494252 B/op      28994 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Kyber-128-Gas=70000-4                    2511           1425779 ns/op             70000 gas/op               49.09 mgas/s      474175 B/op      28893 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Kyber-128-Gas=70000-4                    2516           1439418 ns/op             70000 gas/op               48.62 mgas/s      474175 B/op      28893 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Kyber-128-Gas=70000-4                    2481           1449525 ns/op             70000 gas/op               48.29 mgas/s      474175 B/op      28893 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Kyber-128-Gas=70000-4                    2499           1457555 ns/op             70000 gas/op               48.02 mgas/s      474176 B/op      28893 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Kyber-128-Gas=70000-4                    2415           1444988 ns/op             70000 gas/op               48.44 mgas/s      474175 B/op      28893 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Dilithium-256-Gas=70000-4                2449           1469045 ns/op             70000 gas/op               47.64 mgas/s      482530 B/op      29004 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Dilithium-256-Gas=70000-4                2431           1475053 ns/op             70000 gas/op               47.45 mgas/s      482530 B/op      29004 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Dilithium-256-Gas=70000-4                2413           1523992 ns/op             70000 gas/op               45.93 mgas/s      482530 B/op      29004 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Dilithium-256-Gas=70000-4                2422           1488350 ns/op             70000 gas/op               47.03 mgas/s      482529 B/op      29004 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PureNTT/NTT-Dilithium-256-Gas=70000-4                2456           1511788 ns/op             70000 gas/op               46.30 mgas/s      482530 B/op      29004 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Falcon-512-Gas=921-4            169155             22433 ns/op               921.0 gas/op             41.05 mgas/s       16421 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Falcon-512-Gas=921-4            154490             22596 ns/op               921.0 gas/op             40.75 mgas/s       16421 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Falcon-512-Gas=921-4            160761             23092 ns/op               921.0 gas/op             39.88 mgas/s       16421 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Falcon-512-Gas=921-4            166293             22376 ns/op               921.0 gas/op             41.16 mgas/s       16421 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Falcon-512-Gas=921-4            159754             22323 ns/op               921.0 gas/op             41.25 mgas/s       16421 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Kyber-128-Gas=179-4             631888              5128 ns/op               179.0 gas/op             34.90 mgas/s        4113 B/op          6 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Kyber-128-Gas=179-4             693247              5180 ns/op               179.0 gas/op             34.55 mgas/s        4113 B/op          6 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Kyber-128-Gas=179-4             691948              5246 ns/op               179.0 gas/op             34.11 mgas/s        4113 B/op          6 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Kyber-128-Gas=179-4             705375              5163 ns/op               179.0 gas/op             34.67 mgas/s        4113 B/op          6 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Kyber-128-Gas=179-4             671654              5322 ns/op               179.0 gas/op             33.63 mgas/s        4113 B/op          6 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Dilithium-256-Gas=409-4         301719             11531 ns/op               409.0 gas/op             35.46 mgas/s        8226 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Dilithium-256-Gas=409-4         315060             11462 ns/op               409.0 gas/op             35.68 mgas/s        8226 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Dilithium-256-Gas=409-4         303553             12148 ns/op               409.0 gas/op             33.66 mgas/s        8226 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Dilithium-256-Gas=409-4         292881             11990 ns/op               409.0 gas/op             34.11 mgas/s        8226 B/op          7 allocs/op
+BenchmarkPrecompiledNTTCryptoStandards/PrecomputedNTT/NTT-Dilithium-256-Gas=409-4         301102             12638 ns/op               409.0 gas/op             32.36 mgas/s        8226 B/op          7 allocs/op
+PASS
+ok      github.com/ethereum/go-ethereum/core/vm 115.529s
