@@ -629,7 +629,7 @@ func TestPrecompiledNTTVecOps(t *testing.T) {
 			return result
 		}(),
 		Name: "vecmul ring degree 16",
-		Gas:  65320, // k=8 (2^3, since log2(97)≈6.6), log2(16)=4, gas = 8*4/8 = 4
+		Gas:  72112,
 	}
 	testPrecompiled("13", vecMulTest, t)
 
@@ -659,7 +659,7 @@ func TestPrecompiledNTTVecOps(t *testing.T) {
 			return result
 		}(),
 		Name: "vecadd ring degree 16",
-		Gas:  65160, // k=8, log2(16)=4, gas = 8*4/32 = 1
+		Gas:  72080,
 	}
 	testPrecompiled("14", vecAddTest, t)
 }

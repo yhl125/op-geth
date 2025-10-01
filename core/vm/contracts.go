@@ -24,7 +24,6 @@ import (
 	"maps"
 	"math"
 	"math/big"
-	"math/bits"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -1530,8 +1529,7 @@ func (c *NTT) Run(input []byte) ([]byte, error) {
 type nttVecMulMod struct{}
 
 // RequiredGas returns the gas required for vectorized modular multiplication
-// Gas cost formula: BASE_COST + (COMPUTE_COST_PER_ELEMENT × n) + MODULUS_PENALTY
-// This reflects the memory-bound nature of the operation where base cost dominates
+// Gas cost formula: BASE_COST + (COMPUTE_COST_PER_ELEMENT × n)
 func (c *nttVecMulMod) RequiredGas(input []byte) uint64 {
 	if len(input) < 12 {
 		return 0
@@ -1545,20 +1543,13 @@ func (c *nttVecMulMod) RequiredGas(input []byte) uint64 {
 	}
 
 	const (
-		baseCost             = 65000 // Memory allocation overhead (dominates ~88% of cost)
-		computeCostPerElement = 20    // Actual multiplication cost per element
+		baseCost             = 72000 // Memory allocation and computation overhead
+		computeCostPerElement = 7    // Modular multiplication cost per element
 	)
 
 	// Base cost + compute cost
+	// Optimized to achieve ~50 mgas/s target across cryptographic standards
 	gas := baseCost + (uint64(ringDegree) * computeCostPerElement)
-
-	// Add modulus penalty for large moduli (> 16 bits)
-	// Larger moduli require more complex Barrett reduction
-	logModulus := bits.Len64(modulus - 1)
-	if logModulus > 16 {
-		modulusPenalty := uint64((logModulus - 16) * 1000)
-		gas += modulusPenalty
-	}
 
 	return gas
 }
@@ -1648,8 +1639,7 @@ func (c *nttVecMulMod) Run(input []byte) ([]byte, error) {
 type nttVecAddMod struct{}
 
 // RequiredGas returns the gas required for vectorized modular addition
-// Gas cost formula: BASE_COST + (COMPUTE_COST_PER_ELEMENT × n) + MODULUS_PENALTY
-// Addition is ~2x cheaper than multiplication in compute cost, but shares same base cost
+// Gas cost formula: BASE_COST + (COMPUTE_COST_PER_ELEMENT × n)
 func (c *nttVecAddMod) RequiredGas(input []byte) uint64 {
 	if len(input) < 12 {
 		return 0
@@ -1663,20 +1653,13 @@ func (c *nttVecAddMod) RequiredGas(input []byte) uint64 {
 	}
 
 	const (
-		baseCost             = 65000 // Memory allocation overhead (same as multiplication)
-		computeCostPerElement = 10    // Addition is simpler than multiplication (2x cheaper)
+		baseCost             = 72000 // Memory allocation and computation overhead
+		computeCostPerElement = 5    // Modular addition cost per element
 	)
 
 	// Base cost + compute cost
+	// Optimized to achieve ~50 mgas/s target across cryptographic standards
 	gas := baseCost + (uint64(ringDegree) * computeCostPerElement)
-
-	// Add modulus penalty for large moduli (> 16 bits)
-	// Even addition requires modular reduction for large moduli
-	logModulus := bits.Len64(modulus - 1)
-	if logModulus > 16 {
-		modulusPenalty := uint64((logModulus - 16) * 1000)
-		gas += modulusPenalty
-	}
 
 	return gas
 }
