@@ -24,6 +24,7 @@ import (
 	"maps"
 	"math"
 	"math/big"
+	"math/bits"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -224,6 +225,8 @@ var PrecompiledContractsIsthmus = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
 	common.BytesToAddress([]byte{0x12}):       &NTT{},
+	common.BytesToAddress([]byte{0x13}):       &nttVecMulMod{},
+	common.BytesToAddress([]byte{0x14}):       &nttVecAddMod{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
 }
 
@@ -1518,6 +1521,242 @@ func (c *NTT) Run(input []byte) ([]byte, error) {
 	result := make([]byte, int(ringDegree)*8)
 	for i := 0; i < int(ringDegree); i++ {
 		binary.BigEndian.PutUint64(result[i*8:(i+1)*8], output_poly.Coeffs[0][i])
+	}
+
+	return result, nil
+}
+
+// nttVecMulMod implements vectorized modular multiplication (NTT_VECMULMOD)
+type nttVecMulMod struct{}
+
+// RequiredGas returns the gas required for vectorized modular multiplication
+// Gas cost formula: BASE_COST + (COMPUTE_COST_PER_ELEMENT × n) + MODULUS_PENALTY
+// This reflects the memory-bound nature of the operation where base cost dominates
+func (c *nttVecMulMod) RequiredGas(input []byte) uint64 {
+	if len(input) < 12 {
+		return 0
+	}
+
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	if ringDegree == 0 || modulus == 0 {
+		return 0
+	}
+
+	const (
+		baseCost             = 65000 // Memory allocation overhead (dominates ~88% of cost)
+		computeCostPerElement = 20    // Actual multiplication cost per element
+	)
+
+	// Base cost + compute cost
+	gas := baseCost + (uint64(ringDegree) * computeCostPerElement)
+
+	// Add modulus penalty for large moduli (> 16 bits)
+	// Larger moduli require more complex Barrett reduction
+	logModulus := bits.Len64(modulus - 1)
+	if logModulus > 16 {
+		modulusPenalty := uint64((logModulus - 16) * 1000)
+		gas += modulusPenalty
+	}
+
+	return gas
+}
+
+// Run executes the vectorized modular multiplication operation
+func (c *nttVecMulMod) Run(input []byte) ([]byte, error) {
+	// Input format: ring_degree (4 bytes) + modulus (8 bytes) + vector_a (n*8 bytes) + vector_b (n*8 bytes)
+
+	if len(input) < 12 {
+		return nil, errors.New("input too short")
+	}
+
+	// Extract ring degree (4 bytes, big endian)
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+
+	// Validate ring degree (must be power of 2, >= 16)
+	if ringDegree < 16 || (ringDegree&(ringDegree-1)) != 0 {
+		return nil, errors.New("invalid ring degree: must be power of 2 >= 16")
+	}
+
+	// Extract modulus (8 bytes, big endian)
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Validate modulus
+	if modulus == 0 {
+		return nil, errors.New("modulus cannot be zero")
+	}
+
+	// Check if modulus is congruent to 1 mod 2*ringDegree (NTT-friendly condition)
+	if modulus%(2*uint64(ringDegree)) != 1 {
+		return nil, errors.New("modulus must be congruent to 1 mod 2*ringDegree")
+	}
+
+	// Check input length matches expected: 12 + 2*ringDegree*8 bytes
+	expectedLen := 12 + int(ringDegree)*8*2
+	if len(input) != expectedLen {
+		return nil, fmt.Errorf("input length mismatch: expected %d, got %d", expectedLen, len(input))
+	}
+
+	// Extract vector A coefficients
+	vectorA := make([]uint64, ringDegree)
+	for i := 0; i < int(ringDegree); i++ {
+		vectorA[i] = binary.BigEndian.Uint64(input[12+i*8 : 12+(i+1)*8])
+		if vectorA[i] >= modulus {
+			return nil, fmt.Errorf("coefficient %d in vector A exceeds modulus", i)
+		}
+	}
+
+	// Extract vector B coefficients
+	vectorB := make([]uint64, ringDegree)
+	offset := 12 + int(ringDegree)*8
+	for i := 0; i < int(ringDegree); i++ {
+		vectorB[i] = binary.BigEndian.Uint64(input[offset+i*8 : offset+(i+1)*8])
+		if vectorB[i] >= modulus {
+			return nil, fmt.Errorf("coefficient %d in vector B exceeds modulus", i)
+		}
+	}
+
+	// Create ring
+	r, err := ring.NewRing(int(ringDegree), []uint64{modulus})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ring: %v", err)
+	}
+
+	// Create polynomials
+	polyA := r.NewPoly()
+	polyB := r.NewPoly()
+	polyC := r.NewPoly()
+
+	// Copy coefficients to polynomials
+	copy(polyA.Coeffs[0], vectorA)
+	copy(polyB.Coeffs[0], vectorB)
+
+	// Perform element-wise modular multiplication
+	r.MulCoeffsBarrett(polyA, polyB, polyC)
+
+	// Convert result back to bytes
+	result := make([]byte, int(ringDegree)*8)
+	for i := 0; i < int(ringDegree); i++ {
+		binary.BigEndian.PutUint64(result[i*8:(i+1)*8], polyC.Coeffs[0][i])
+	}
+
+	return result, nil
+}
+
+// nttVecAddMod implements vectorized modular addition (NTT_VECADDMOD)
+type nttVecAddMod struct{}
+
+// RequiredGas returns the gas required for vectorized modular addition
+// Gas cost formula: BASE_COST + (COMPUTE_COST_PER_ELEMENT × n) + MODULUS_PENALTY
+// Addition is ~2x cheaper than multiplication in compute cost, but shares same base cost
+func (c *nttVecAddMod) RequiredGas(input []byte) uint64 {
+	if len(input) < 12 {
+		return 0
+	}
+
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	if ringDegree == 0 || modulus == 0 {
+		return 0
+	}
+
+	const (
+		baseCost             = 65000 // Memory allocation overhead (same as multiplication)
+		computeCostPerElement = 10    // Addition is simpler than multiplication (2x cheaper)
+	)
+
+	// Base cost + compute cost
+	gas := baseCost + (uint64(ringDegree) * computeCostPerElement)
+
+	// Add modulus penalty for large moduli (> 16 bits)
+	// Even addition requires modular reduction for large moduli
+	logModulus := bits.Len64(modulus - 1)
+	if logModulus > 16 {
+		modulusPenalty := uint64((logModulus - 16) * 1000)
+		gas += modulusPenalty
+	}
+
+	return gas
+}
+
+// Run executes the vectorized modular addition operation
+func (c *nttVecAddMod) Run(input []byte) ([]byte, error) {
+	// Input format: ring_degree (4 bytes) + modulus (8 bytes) + vector_a (n*8 bytes) + vector_b (n*8 bytes)
+
+	if len(input) < 12 {
+		return nil, errors.New("input too short")
+	}
+
+	// Extract ring degree (4 bytes, big endian)
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+
+	// Validate ring degree (must be power of 2, >= 16)
+	if ringDegree < 16 || (ringDegree&(ringDegree-1)) != 0 {
+		return nil, errors.New("invalid ring degree: must be power of 2 >= 16")
+	}
+
+	// Extract modulus (8 bytes, big endian)
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Validate modulus
+	if modulus == 0 {
+		return nil, errors.New("modulus cannot be zero")
+	}
+
+	// Check if modulus is congruent to 1 mod 2*ringDegree (NTT-friendly condition)
+	if modulus%(2*uint64(ringDegree)) != 1 {
+		return nil, errors.New("modulus must be congruent to 1 mod 2*ringDegree")
+	}
+
+	// Check input length matches expected: 12 + 2*ringDegree*8 bytes
+	expectedLen := 12 + int(ringDegree)*8*2
+	if len(input) != expectedLen {
+		return nil, fmt.Errorf("input length mismatch: expected %d, got %d", expectedLen, len(input))
+	}
+
+	// Extract vector A coefficients
+	vectorA := make([]uint64, ringDegree)
+	for i := 0; i < int(ringDegree); i++ {
+		vectorA[i] = binary.BigEndian.Uint64(input[12+i*8 : 12+(i+1)*8])
+		if vectorA[i] >= modulus {
+			return nil, fmt.Errorf("coefficient %d in vector A exceeds modulus", i)
+		}
+	}
+
+	// Extract vector B coefficients
+	vectorB := make([]uint64, ringDegree)
+	offset := 12 + int(ringDegree)*8
+	for i := 0; i < int(ringDegree); i++ {
+		vectorB[i] = binary.BigEndian.Uint64(input[offset+i*8 : offset+(i+1)*8])
+		if vectorB[i] >= modulus {
+			return nil, fmt.Errorf("coefficient %d in vector B exceeds modulus", i)
+		}
+	}
+
+	// Create ring
+	r, err := ring.NewRing(int(ringDegree), []uint64{modulus})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ring: %v", err)
+	}
+
+	// Create polynomials
+	polyA := r.NewPoly()
+	polyB := r.NewPoly()
+	polyC := r.NewPoly()
+
+	// Copy coefficients to polynomials
+	copy(polyA.Coeffs[0], vectorA)
+	copy(polyB.Coeffs[0], vectorB)
+
+	// Perform element-wise modular addition
+	r.Add(polyA, polyB, polyC)
+
+	// Convert result back to bytes
+	result := make([]byte, int(ringDegree)*8)
+	for i := 0; i < int(ringDegree); i++ {
+		binary.BigEndian.PutUint64(result[i*8:(i+1)*8], polyC.Coeffs[0][i])
 	}
 
 	return result, nil
