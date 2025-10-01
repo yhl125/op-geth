@@ -1,14 +1,18 @@
 # Optimism-geth with NTT Precompiles
 
-This is a fork of `op-geth` that includes a precompiled contract for Number Theoretic Transform (NTT) operations.
+This is a fork of `op-geth` that includes precompiled contracts for Number Theoretic Transform (NTT) operations and vectorized modular arithmetic.
 
-## NTT Precompiled Contract
+## Precompiled Contracts
 
-The following precompiled contract has been added at address `0x12` in `core/vm/contracts.go`:
+The following precompiled contracts have been added in `core/vm/contracts.go`:
 
 - **`0x12`: NTT**: Performs Number Theoretic Transform operations using the Lattigo library. Supports both forward and inverse NTT transformations.
+- **`0x13`: VECMULMOD**: Vectorized modular multiplication for element-wise polynomial operations in the NTT domain.
+- **`0x14`: VECADDMOD**: Vectorized modular addition for element-wise polynomial operations in the NTT domain.
 
 ### Implementation Details
+
+#### NTT Precompile (0x12)
 
 The NTT precompile accepts input in the following format:
 - `operation` (1 byte): `0x00` for forward NTT, `0x01` for inverse NTT
@@ -16,17 +20,56 @@ The NTT precompile accepts input in the following format:
 - `modulus` (8 bytes): NTT-friendly prime where `q ≡ 1 (mod 2N)`
 - `coefficients` (8*N bytes): Ring coefficients as 64-bit integers
 
-### Gas Costing
+**Gas Costing**: A fixed gas cost of 70,000 is applied, targeting approximately 50 mgas/s performance to maintain consistency with existing precompiles like `ecrecover`.
 
-A fixed gas cost of 70,000 is applied, targeting approximately 50 mgas/s performance to maintain consistency with existing precompiles like `ecrecover`.
+#### VECMULMOD Precompile (0x13)
+
+Performs element-wise modular multiplication of two vectors in the NTT domain: `result[i] = (a[i] * b[i]) mod q`
+
+Input format:
+- `ring_degree` (4 bytes): Power of 2, minimum 16
+- `modulus` (8 bytes): NTT-friendly prime where `q ≡ 1 (mod 2N)`
+- `vector_a` (8*N bytes): First vector coefficients
+- `vector_b` (8*N bytes): Second vector coefficients
+
+**Gas Costing**: Uses a memory-aware formula reflecting the dominant overhead of memory allocation, targeting approximately 50 mgas/s performance:
+```
+Gas = BASE_COST + (COMPUTE_COST_PER_ELEMENT × N) + MODULUS_PENALTY
+    = 65,000 + (20 × N) + max(0, (log₂(q) - 16) × 1000)
+```
+
+Where:
+- `BASE_COST` (65,000 gas): Memory allocation overhead (~88% of total cost)
+- `COMPUTE_COST_PER_ELEMENT` (20 gas): Barrett reduction multiplication per element
+- `MODULUS_PENALTY`: Additional cost for large moduli requiring complex reduction
+
+#### VECADDMOD Precompile (0x14)
+
+Performs element-wise modular addition of two vectors: `result[i] = (a[i] + b[i]) mod q`
+
+Input format: Same as VECMULMOD (0x13)
+
+**Gas Costing**: Uses the same memory-aware formula with cheaper compute cost, targeting approximately 50 mgas/s performance:
+```
+Gas = BASE_COST + (COMPUTE_COST_PER_ELEMENT × N) + MODULUS_PENALTY
+    = 65,000 + (10 × N) + max(0, (log₂(q) - 16) × 1000)
+```
+
+Addition is 2× cheaper than multiplication in compute cost (10 vs 20 gas per element), reflecting the simpler modular reduction required.
 
 ### Tests and Benchmarks
 
 Comprehensive tests and benchmarks are implemented in `core/vm/contracts_test.go`, including:
 
+#### NTT Tests (0x12)
 - **Malformed Input Tests**: 8 test cases covering invalid operations, ring degrees, moduli, and coefficients
 - **Forward/Inverse NTT Tests**: Round-trip validation ensuring `INTT(NTT(x)) = x`
 - **Crypto Standards Benchmarks**: Performance testing with real-world parameters from Falcon-512, Kyber-128, and Dilithium-256
+
+#### Vector Operations Tests (0x13, 0x14)
+- **Unified Malformed Input Tests**: 7 test cases covering invalid ring degrees, moduli, and input lengths for both VECMULMOD and VECADDMOD
+- **Functional Tests**: Validates correct element-wise operations with small test vectors
+- **Crypto Standards Benchmarks**: Performance testing with Falcon-512, Kyber-128, and Dilithium-256 parameters
 
 ### Benchmark Results
 
@@ -34,6 +77,7 @@ Benchmarks were run on an Intel(R) Xeon(R) CPU @ 2.20GHz. For detailed results, 
 
 - [Ecrecover Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledEcrecover)
 - [NTT Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledNTTCryptoStandards)
+- [Vector Operations Benchmark Test Results](./benchmark_results/BenchmarkPrecompiledNTTVecOpsCryptoStandards)
 
 ---
 
