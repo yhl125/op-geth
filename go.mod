@@ -65,6 +65,7 @@ require (
 	github.com/supranational/blst v0.3.15
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	github.com/urfave/cli/v2 v2.27.5
+	github.com/yhl125/liboqs/bindings/go v0.0.0-20251023043545-638bc09a4f2c
 	go.uber.org/automaxprocs v1.5.2
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.36.0
