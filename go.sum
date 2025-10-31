@@ -370,8 +370,8 @@ github.com/valyala/fasttemplate v1.0.1/go.mod h1:UQGH1tvbgY+Nz5t2n7tXsz52dQxojPU
 github.com/valyala/fasttemplate v1.2.1/go.mod h1:KHLXt3tVN2HBp8eijSv/kGJopbvo7S+qRAEEKiv+SiQ=
 github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 h1:gEOO8jv9F4OT7lGCjxCBTO/36wtF6j2nSip77qHd4x4=
 github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1/go.mod h1:Ohn+xnUBiLI6FVj/9LpzZWtj1/D6lUovWYBkxHVV3aM=
-github.com/yhl125/liboqs/bindings/go v0.0.0-20251023043545-638bc09a4f2c h1:C/608DpZ1Q6qPajR0ej337x/8RVpLy9NNHKc36k/H60=
-github.com/yhl125/liboqs/bindings/go v0.0.0-20251023043545-638bc09a4f2c/go.mod h1:gXare0qm+X8omn4F55j0leSNBdDVz8oQ+7WhCWfo8BE=
+github.com/yhl125/liboqs/bindings/go v0.0.0-20251031081623-5be45d043982 h1:jCCEl0hy7Z6ubxV9OdMT7WXo6YLN41taqGL0MkBwFTM=
+github.com/yhl125/liboqs/bindings/go v0.0.0-20251031081623-5be45d043982/go.mod h1:gXare0qm+X8omn4F55j0leSNBdDVz8oQ+7WhCWfo8BE=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=

@@ -1583,14 +1583,14 @@ func (c *NTT_FW) RequiredGas(input []byte) uint64 {
 	modulus := binary.BigEndian.Uint64(input[4:12])
 
 	// Detect scheme and return appropriate gas cost
-	// Gas costs calibrated for ~80 mgas/s throughput
+	// Gas costs calibrated for 50 mgas/s throughput
 	switch {
 	case ringDegree == 512 && modulus == 12289:
-		return 460 // Falcon-512 (~6000 ns execution time)
+		return 500 // Falcon-512
 	case ringDegree == 1024 && modulus == 12289:
-		return 910 // Falcon-1024 (~11400 ns execution time)
+		return 1080 // Falcon-1024
 	case ringDegree == 256 && modulus == 8380417:
-		return 250 // ML-DSA (~3166 ns execution time)
+		return 256 // ML-DSA
 	default:
 		return 0 // Invalid parameters
 	}
@@ -1710,14 +1710,14 @@ func (c *NTT_INV) RequiredGas(input []byte) uint64 {
 	modulus := binary.BigEndian.Uint64(input[4:12])
 
 	// Detect scheme and return appropriate gas cost
-	// Gas costs calibrated for ~80 mgas/s throughput
+	// Gas costs calibrated for 50 mgas/s throughput
 	switch {
 	case ringDegree == 512 && modulus == 12289:
-		return 440 // Falcon-512 (~5600 ns execution time)
+		return 500 // Falcon-512
 	case ringDegree == 1024 && modulus == 12289:
-		return 880 // Falcon-1024 (~11110 ns execution time)
+		return 1080 // Falcon-1024
 	case ringDegree == 256 && modulus == 8380417:
-		return 340 // ML-DSA (~4284 ns execution time)
+		return 340 // ML-DSA
 	default:
 		return 0 // Invalid parameters
 	}
