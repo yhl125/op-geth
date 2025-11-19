@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/blake2b"
 	"github.com/ethereum/go-ethereum/crypto/bn256"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/crypto/ntt"
 	"github.com/ethereum/go-ethereum/crypto/secp256r1"
 	"github.com/ethereum/go-ethereum/params"
 	"golang.org/x/crypto/ripemd160"
@@ -245,6 +246,8 @@ var PrecompiledContractsJovian = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0f}):       &bls12381PairingJovian{},
 	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x12}):       &NTT_FW{},
+	common.BytesToAddress([]byte{0x13}):       &NTT_INV{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
 }
 
@@ -1639,4 +1642,254 @@ func (c *p256Verify) Run(input []byte) ([]byte, error) {
 
 func (c *p256Verify) Name() string {
 	return "P256VERIFY"
+}
+
+// NTT_FW implements forward NTT for Falcon and ML-DSA (Dilithium) parameters.
+//
+// This precompile automatically detects the cryptographic scheme based on
+// ring degree and modulus, then dispatches to the appropriate Go NTT function.
+//
+// Supported parameters:
+//   - Falcon-512:  ringDegree=512,  modulus=12289
+//   - Falcon-1024: ringDegree=1024, modulus=12289
+//   - ML-DSA: ringDegree=256,  modulus=8380417
+//
+// Input format:
+//
+//	[0:4]   ring_degree (uint32, big-endian)
+//	[4:12]  modulus (uint64, big-endian)
+//	[12:*]  coefficients (ringDegree elements)
+//	        - Falcon: uint16 values (2 bytes each, big-endian)
+//	        - ML-DSA: int32 values (4 bytes each, big-endian, signed as uint32)
+//
+// Output format:
+//
+//	[0:*]   NTT-transformed coefficients (same encoding as input)
+//	        - Falcon: ringDegree × uint16 (2 bytes each, big-endian)
+//	        - ML-DSA: ringDegree × int32 (4 bytes each, big-endian, signed as uint32)
+//
+// Gas cost: Variable based on scheme (256-1080 gas, calibrated for ~50 mgas/s)
+type NTT_FW struct{}
+
+func (c *NTT_FW) RequiredGas(input []byte) uint64 {
+	if len(input) < 12 {
+		return 0
+	}
+
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Detect scheme and return appropriate gas cost
+	// Gas costs calibrated for 50 mgas/s throughput
+	switch {
+	case ringDegree == 512 && modulus == 12289:
+		return 500 // Falcon-512
+	case ringDegree == 1024 && modulus == 12289:
+		return 1080 // Falcon-1024
+	case ringDegree == 256 && modulus == 8380417:
+		return 256 // ML-DSA
+	default:
+		return 0 // Invalid parameters
+	}
+}
+
+func (c *NTT_FW) Run(input []byte) ([]byte, error) {
+	// Validate minimum input length
+	if len(input) < 12 {
+		return nil, errors.New("input too short: minimum 12 bytes required")
+	}
+
+	// Parse ring degree and modulus
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Detect scheme and dispatch to appropriate implementation
+	switch {
+	case ringDegree == 512 && modulus == 12289:
+		return c.runFalconNTT(input[12:], 9) // logn = 9 for n=512
+	case ringDegree == 1024 && modulus == 12289:
+		return c.runFalconNTT(input[12:], 10) // logn = 10 for n=1024
+	case ringDegree == 256 && modulus == 8380417:
+		return c.runMLDSANTT(input[12:])
+	default:
+		return nil, fmt.Errorf("unsupported parameters: ringDegree=%d, modulus=%d (only Falcon-512/1024 and ML-DSA supported)", ringDegree, modulus)
+	}
+}
+
+func (c *NTT_FW) runFalconNTT(coeffData []byte, logn uint) ([]byte, error) {
+	n := 1 << logn // 512 or 1024
+	expectedLen := n * 2
+	if len(coeffData) != expectedLen {
+		return nil, fmt.Errorf("invalid coefficient data length for Falcon: expected %d bytes, got %d", expectedLen, len(coeffData))
+	}
+
+	// Parse uint16 coefficients
+	poly := make([]uint16, n)
+	for i := 0; i < n; i++ {
+		poly[i] = binary.BigEndian.Uint16(coeffData[i*2 : (i+1)*2])
+	}
+
+	// Execute Falcon forward NTT using Go implementation
+	ntt.FalconNTT(poly, logn)
+
+	// Encode result
+	result := make([]byte, n*2)
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint16(result[i*2:(i+1)*2], poly[i])
+	}
+
+	return result, nil
+}
+
+func (c *NTT_FW) runMLDSANTT(coeffData []byte) ([]byte, error) {
+	const n = 256
+	expectedLen := n * 4
+	if len(coeffData) != expectedLen {
+		return nil, fmt.Errorf("invalid coefficient data length for ML-DSA: expected %d bytes, got %d", expectedLen, len(coeffData))
+	}
+
+	// Parse int32 coefficients
+	poly := make([]int32, n)
+	for i := 0; i < n; i++ {
+		poly[i] = int32(binary.BigEndian.Uint32(coeffData[i*4 : (i+1)*4]))
+	}
+
+	// Execute ML-DSA forward NTT using Go implementation
+	ntt.DilithiumNTT(poly)
+
+	// Encode result
+	result := make([]byte, n*4)
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint32(result[i*4:(i+1)*4], uint32(poly[i]))
+	}
+
+	return result, nil
+}
+
+func (c *NTT_FW) Name() string {
+	return "NTT_FW"
+}
+
+// NTT_INV implements inverse NTT for Falcon and ML-DSA (Dilithium) parameters.
+//
+// This precompile automatically detects the cryptographic scheme based on
+// ring degree and modulus, then dispatches to the appropriate Go inverse NTT function.
+//
+// Supported parameters:
+//   - Falcon-512:  ringDegree=512,  modulus=12289
+//   - Falcon-1024: ringDegree=1024, modulus=12289
+//   - ML-DSA: ringDegree=256,  modulus=8380417
+//
+// Input format:
+//
+//	[0:4]   ring_degree (uint32, big-endian)
+//	[4:12]  modulus (uint64, big-endian)
+//	[12:*]  coefficients (ringDegree elements)
+//	        - Falcon: uint16 values (2 bytes each)
+//	        - ML-DSA: int32 values (4 bytes each)
+//
+// Output format:
+//
+//	[0:*]   transformed coefficients (same format as input)
+//
+// Gas cost: Variable based on scheme (340-1080 gas, calibrated for ~50 mgas/s)
+type NTT_INV struct{}
+
+func (c *NTT_INV) RequiredGas(input []byte) uint64 {
+	if len(input) < 12 {
+		return 0
+	}
+
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Detect scheme and return appropriate gas cost
+	// Gas costs calibrated for 50 mgas/s throughput
+	switch {
+	case ringDegree == 512 && modulus == 12289:
+		return 500 // Falcon-512
+	case ringDegree == 1024 && modulus == 12289:
+		return 1080 // Falcon-1024
+	case ringDegree == 256 && modulus == 8380417:
+		return 340 // ML-DSA
+	default:
+		return 0 // Invalid parameters
+	}
+}
+
+func (c *NTT_INV) Run(input []byte) ([]byte, error) {
+	// Validate minimum input length
+	if len(input) < 12 {
+		return nil, errors.New("input too short: minimum 12 bytes required")
+	}
+
+	// Parse ring degree and modulus
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Detect scheme and dispatch to appropriate implementation
+	switch {
+	case ringDegree == 512 && modulus == 12289:
+		return c.runFalconINTT(input[12:], 9) // logn = 9 for n=512
+	case ringDegree == 1024 && modulus == 12289:
+		return c.runFalconINTT(input[12:], 10) // logn = 10 for n=1024
+	case ringDegree == 256 && modulus == 8380417:
+		return c.runMLDSAINTT(input[12:])
+	default:
+		return nil, fmt.Errorf("unsupported parameters: ringDegree=%d, modulus=%d (only Falcon-512/1024 and ML-DSA supported)", ringDegree, modulus)
+	}
+}
+
+func (c *NTT_INV) runFalconINTT(coeffData []byte, logn uint) ([]byte, error) {
+	n := 1 << logn // 512 or 1024
+	expectedLen := n * 2
+	if len(coeffData) != expectedLen {
+		return nil, fmt.Errorf("invalid coefficient data length for Falcon: expected %d bytes, got %d", expectedLen, len(coeffData))
+	}
+
+	// Parse uint16 coefficients
+	poly := make([]uint16, n)
+	for i := 0; i < n; i++ {
+		poly[i] = binary.BigEndian.Uint16(coeffData[i*2 : (i+1)*2])
+	}
+
+	// Execute Falcon inverse NTT using Go implementation
+	ntt.FalconINTT(poly, logn)
+
+	// Encode result
+	result := make([]byte, n*2)
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint16(result[i*2:(i+1)*2], poly[i])
+	}
+
+	return result, nil
+}
+
+func (c *NTT_INV) runMLDSAINTT(coeffData []byte) ([]byte, error) {
+	const n = 256
+	expectedLen := n * 4
+	if len(coeffData) != expectedLen {
+		return nil, fmt.Errorf("invalid coefficient data length for ML-DSA: expected %d bytes, got %d", expectedLen, len(coeffData))
+	}
+
+	// Parse int32 coefficients
+	poly := make([]int32, n)
+	for i := 0; i < n; i++ {
+		poly[i] = int32(binary.BigEndian.Uint32(coeffData[i*4 : (i+1)*4]))
+	}
+
+	// Execute ML-DSA inverse NTT using Go implementation (with freeze)
+	ntt.DilithiumInvNTT(poly)
+
+	// Encode result
+	result := make([]byte, n*4)
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint32(result[i*4:(i+1)*4], uint32(poly[i]))
+	}
+
+	return result, nil
+}
+
+func (c *NTT_INV) Name() string {
+	return "NTT_INV"
 }
