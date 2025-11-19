@@ -1668,7 +1668,7 @@ func (c *p256Verify) Name() string {
 //	        - Falcon: ringDegree × uint16 (2 bytes each, big-endian)
 //	        - ML-DSA: ringDegree × int32 (4 bytes each, big-endian, signed as uint32)
 //
-// Gas cost: Variable based on scheme (256-1080 gas, calibrated for ~50 mgas/s)
+// Gas cost: Variable based on scheme (224-1810 gas, calibrated for ~52 mgas/s)
 type NTT_FW struct{}
 
 func (c *NTT_FW) RequiredGas(input []byte) uint64 {
@@ -1680,14 +1680,14 @@ func (c *NTT_FW) RequiredGas(input []byte) uint64 {
 	modulus := binary.BigEndian.Uint64(input[4:12])
 
 	// Detect scheme and return appropriate gas cost
-	// Gas costs calibrated for 50 mgas/s throughput
+	// Gas costs calibrated for 50-52 mgas/s throughput (similar to ecrecover)
 	switch {
 	case ringDegree == 512 && modulus == 12289:
-		return 500 // Falcon-512
+		return 790 // Falcon-512
 	case ringDegree == 1024 && modulus == 12289:
-		return 1080 // Falcon-1024
+		return 1750 // Falcon-1024
 	case ringDegree == 256 && modulus == 8380417:
-		return 256 // ML-DSA
+		return 220 // ML-DSA
 	default:
 		return 0 // Invalid parameters
 	}
@@ -1792,7 +1792,7 @@ func (c *NTT_FW) Name() string {
 //
 //	[0:*]   transformed coefficients (same format as input)
 //
-// Gas cost: Variable based on scheme (340-1080 gas, calibrated for ~50 mgas/s)
+// Gas cost: Variable based on scheme (270-1720 gas, calibrated for ~52 mgas/s)
 type NTT_INV struct{}
 
 func (c *NTT_INV) RequiredGas(input []byte) uint64 {
@@ -1804,14 +1804,14 @@ func (c *NTT_INV) RequiredGas(input []byte) uint64 {
 	modulus := binary.BigEndian.Uint64(input[4:12])
 
 	// Detect scheme and return appropriate gas cost
-	// Gas costs calibrated for 50 mgas/s throughput
+	// Gas costs calibrated for 50-52 mgas/s throughput (similar to ecrecover)
 	switch {
 	case ringDegree == 512 && modulus == 12289:
-		return 500 // Falcon-512
+		return 790 // Falcon-512
 	case ringDegree == 1024 && modulus == 12289:
-		return 1080 // Falcon-1024
+		return 1750 // Falcon-1024
 	case ringDegree == 256 && modulus == 8380417:
-		return 340 // ML-DSA
+		return 270 // ML-DSA
 	default:
 		return 0 // Invalid parameters
 	}
