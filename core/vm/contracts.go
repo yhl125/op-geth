@@ -248,6 +248,8 @@ var PrecompiledContractsJovian = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
 	common.BytesToAddress([]byte{0x12}):       &NTT_FW{},
 	common.BytesToAddress([]byte{0x13}):       &NTT_INV{},
+	common.BytesToAddress([]byte{0x14}):       &NTT_VECMULMOD{},
+	common.BytesToAddress([]byte{0x15}):       &NTT_VECADDMOD{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
 }
 
@@ -1892,4 +1894,244 @@ func (c *NTT_INV) runMLDSAINTT(coeffData []byte) ([]byte, error) {
 
 func (c *NTT_INV) Name() string {
 	return "NTT_INV"
+}
+
+// NTT_VECMULMOD implements vectorized modular multiplication for Falcon and ML-DSA.
+//
+// This precompile performs element-wise modular multiplication of two vectors
+// in the ring R = Fq[X]/(X^n + 1), supporting both Falcon and ML-DSA parameters.
+//
+// Implementation uses direct modular multiplication (a*b % q) with compile-time constant
+// modulus values. The Go compiler optimizes constant modulus operations (% 12289, % 8380417)
+// to magic multiply + shift at compile time, avoiding division instructions. This provides
+// better performance than Montgomery multiplication while avoiding the complexity of two
+// conversion calls (standard→Montgomery→standard) required for API compatibility with
+// standard residue representation.
+//
+// Supported parameters:
+//   - Falcon-512:  ringDegree=512,  modulus=12289
+//   - Falcon-1024: ringDegree=1024, modulus=12289
+//   - ML-DSA (all): ringDegree=256,  modulus=8380417
+//
+// Input format:
+//
+//	[0:4]   ring_degree (uint32, big-endian)
+//	[4:12]  modulus (uint64, big-endian)
+//	[12:12+n*elem_size] first vector coefficients
+//	[12+n*elem_size:*]  second vector coefficients
+//
+// Element encoding:
+//   - Falcon: uint16 (2 bytes each, big-endian)
+//   - ML-DSA: int32 as uint32 (4 bytes each, big-endian)
+//
+// Output format:
+//
+//	[0:*]   Element-wise product (a[i] * b[i] mod q) for i=0..n-1
+//
+// Gas cost: ceil(0.32 * n) where n is the ring degree
+type NTT_VECMULMOD struct{}
+
+func (c *NTT_VECMULMOD) RequiredGas(input []byte) uint64 {
+	if len(input) < 12 {
+		return 0
+	}
+	n := binary.BigEndian.Uint32(input[0:4])
+	if n == 0 || (n&(n-1)) != 0 {
+		return 0
+	}
+
+	// O(n)
+	const Cmul_num = 32 // 0.32
+	const Cmul_den = 100
+	gas := (uint64(n)*Cmul_num + Cmul_den - 1) / Cmul_den // ceil(0.32*n)
+	if gas == 0 {
+		gas = 1
+	}
+	return gas
+}
+
+func (c *NTT_VECMULMOD) Run(input []byte) ([]byte, error) {
+	// Validate minimum input length
+	if len(input) < 12 {
+		return nil, errors.New("input too short: minimum 12 bytes required")
+	}
+
+	// Parse ring degree and modulus
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Validate ring degree is power of 2
+	if ringDegree == 0 || (ringDegree&(ringDegree-1)) != 0 {
+		return nil, errors.New("ring degree must be a power of 2")
+	}
+
+	// Dispatch based on modulus
+	switch modulus {
+	case 12289:
+		return runFalconVecMul(input[12:], int(ringDegree))
+	case 8380417:
+		return runMLDSAVecMul(input[12:], int(ringDegree))
+	default:
+		return nil, fmt.Errorf("unsupported modulus: %d (only 12289 and 8380417 supported)", modulus)
+	}
+}
+
+func runFalconVecMul(data []byte, n int) ([]byte, error) {
+	expectedLen := n * 2 * 2
+	if len(data) != expectedLen {
+		return nil, fmt.Errorf("invalid data length: expected %d bytes, got %d", expectedLen, len(data))
+	}
+	const Q = uint32(12289)
+
+	out := make([]byte, n*2)
+	for i := range n {
+		a := binary.BigEndian.Uint16(data[i*2 : (i+1)*2])
+		b := binary.BigEndian.Uint16(data[(n+i)*2 : (n+i+1)*2])
+		p := (uint32(a) * uint32(b)) % Q
+		binary.BigEndian.PutUint16(out[i*2:(i+1)*2], uint16(p))
+	}
+	return out, nil
+}
+
+func runMLDSAVecMul(data []byte, n int) ([]byte, error) {
+	expectedLen := n * 4 * 2
+	if len(data) != expectedLen {
+		return nil, fmt.Errorf("invalid data length: expected %d bytes, got %d", expectedLen, len(data))
+	}
+	const Q = int64(8380417)
+
+	out := make([]byte, n*4)
+	for i := range n {
+		a := int32(binary.BigEndian.Uint32(data[i*4 : (i+1)*4]))
+		b := int32(binary.BigEndian.Uint32(data[(n+i)*4 : (n+i+1)*4]))
+		p := (int64(a) * int64(b)) % Q
+		if p < 0 {
+			p += Q
+		}
+		binary.BigEndian.PutUint32(out[i*4:(i+1)*4], uint32(p))
+	}
+	return out, nil
+}
+
+func (c *NTT_VECMULMOD) Name() string {
+	return "NTT_VECMULMOD"
+}
+
+// NTT_VECADDMOD implements vectorized modular addition for Falcon and ML-DSA.
+//
+// This precompile performs element-wise modular addition of two vectors
+// in the ring R = Fq[X]/(X^n + 1), supporting both Falcon and ML-DSA parameters.
+//
+// Implementation uses simple conditional subtraction (if sum >= q then sum -= q),
+// which provides equivalent performance to bit-manipulation based conditional reduction
+// with clearer, more maintainable code.
+//
+// Supported parameters:
+//   - Falcon-512:  ringDegree=512,  modulus=12289
+//   - Falcon-1024: ringDegree=1024, modulus=12289
+//   - ML-DSA (all): ringDegree=256,  modulus=8380417
+//
+// Input format: Same as NTT_VECMULMOD
+//
+//	[0:4]   ring_degree (uint32, big-endian)
+//	[4:12]  modulus (uint64, big-endian)
+//	[12:*]  two vectors concatenated
+//
+// Output format:
+//
+//	[0:*]   Element-wise sum (a[i] + b[i] mod q) for i=0..n-1
+//
+// Gas cost: ceil(0.3 * n) where n is the ring degree
+type NTT_VECADDMOD struct{}
+
+func (c *NTT_VECADDMOD) RequiredGas(input []byte) uint64 {
+	if len(input) < 12 {
+		return 0
+	}
+	n := binary.BigEndian.Uint32(input[0:4])
+	if n == 0 || (n&(n-1)) != 0 {
+		return 0
+	}
+
+	// O(n)
+	const Cadd_num = 30 // 0.3
+	const Cadd_den = 100
+	gas := (uint64(n)*Cadd_num + Cadd_den - 1) / Cadd_den // ceil(0.3*n)
+	if gas == 0 {
+		gas = 1
+	}
+	return gas
+}
+
+func (c *NTT_VECADDMOD) Run(input []byte) ([]byte, error) {
+	// Validate minimum input length
+	if len(input) < 12 {
+		return nil, errors.New("input too short: minimum 12 bytes required")
+	}
+
+	// Parse ring degree and modulus
+	ringDegree := binary.BigEndian.Uint32(input[0:4])
+	modulus := binary.BigEndian.Uint64(input[4:12])
+
+	// Validate ring degree is power of 2
+	if ringDegree == 0 || (ringDegree&(ringDegree-1)) != 0 {
+		return nil, errors.New("ring degree must be a power of 2")
+	}
+
+	// Dispatch based on modulus
+	switch modulus {
+	case 12289:
+		return runUint16VecAdd(input[12:], int(ringDegree), uint16(modulus))
+	case 8380417:
+		return runInt32VecAdd(input[12:], int(ringDegree), int32(modulus))
+	default:
+		return nil, fmt.Errorf("unsupported modulus: %d (only 12289 and 8380417 supported)", modulus)
+	}
+}
+
+func runUint16VecAdd(data []byte, n int, q uint16) ([]byte, error) {
+	expectedLen := n * 2 * 2
+	if len(data) != expectedLen {
+		return nil, fmt.Errorf("invalid data length: expected %d bytes, got %d", expectedLen, len(data))
+	}
+
+	out := make([]byte, n*2)
+	for i := range n {
+		a := binary.BigEndian.Uint16(data[i*2 : (i+1)*2])
+		b := binary.BigEndian.Uint16(data[(n+i)*2 : (n+i+1)*2])
+		sum := uint32(a) + uint32(b)
+		if sum >= uint32(q) {
+			sum -= uint32(q)
+		}
+		binary.BigEndian.PutUint16(out[i*2:(i+1)*2], uint16(sum))
+	}
+
+	return out, nil
+}
+
+func runInt32VecAdd(data []byte, n int, q int32) ([]byte, error) {
+	expectedLen := n * 4 * 2
+	if len(data) != expectedLen {
+		return nil, fmt.Errorf("invalid data length: expected %d bytes, got %d", expectedLen, len(data))
+	}
+
+	out := make([]byte, n*4)
+	for i := range n {
+		a := int32(binary.BigEndian.Uint32(data[i*4 : (i+1)*4]))
+		b := int32(binary.BigEndian.Uint32(data[(n+i)*4 : (n+i+1)*4]))
+		sum := a + b
+		if sum >= q {
+			sum -= q
+		}
+		if sum < 0 {
+			sum += q
+		}
+		binary.BigEndian.PutUint32(out[i*4:(i+1)*4], uint32(sum))
+	}
+
+	return out, nil
+}
+
+func (c *NTT_VECADDMOD) Name() string {
+	return "NTT_VECADDMOD"
 }
