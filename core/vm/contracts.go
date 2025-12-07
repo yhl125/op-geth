@@ -225,6 +225,10 @@ var PrecompiledContractsIsthmus = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0f}):       &bls12381PairingIsthmus{},
 	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x12}):       &NTT_FW{},
+	common.BytesToAddress([]byte{0x13}):       &NTT_INV{},
+	common.BytesToAddress([]byte{0x14}):       &NTT_VECMULMOD{},
+	common.BytesToAddress([]byte{0x15}):       &NTT_VECADDMOD{},
 	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
 }
 
